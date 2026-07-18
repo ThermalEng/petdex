@@ -13,6 +13,8 @@
 
 const std = @import("std");
 const runner = @import("runner");
+
+extern "c" fn system(command: [*:0]const u8) c_int;
 const native_sdk = @import("native_sdk");
 const hook_server = @import("hook_server.zig");
 
@@ -112,6 +114,12 @@ pub const Msg = union(enum) {
     physics_tick: native_sdk.EffectTimer,
     frame_clock,
     cycle_state,
+    open_settings,
+    settings_closed,
+    close_pet,
+    select_pet: u32,
+    set_scale: f32,
+    open_pets_folder,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
 };
@@ -149,7 +157,29 @@ pub const Model = struct {
     dragging: bool = false,
     grab_dx: f64 = 0,
     grab_dy: f64 = 0,
+    settings_open: bool = false,
+    /// Sprite scale, persisted. Codex parity: the settings slider maps
+    /// 0.4..1.2 over this.
+    scale: f32 = 0.7,
+    active_pet: u32 = 0,
 };
+
+pub const max_catalog = 32;
+pub const CatalogEntry = struct {
+    name: [64]u8 = @splat(0),
+    len: usize = 0,
+    root: [160]u8 = @splat(0),
+    root_len: usize = 0,
+
+    pub fn slice(self: *const CatalogEntry) []const u8 {
+        return self.name[0..self.len];
+    }
+    pub fn rootSlice(self: *const CatalogEntry) []const u8 {
+        return self.root[0..self.root_len];
+    }
+};
+pub var catalog: [max_catalog]CatalogEntry = @splat(.{});
+pub var catalog_len: usize = 0;
 
 pub const PosSample = struct { x: f64 = 0, y: f64 = 0, t_ms: i64 = 0 };
 
@@ -291,74 +321,157 @@ fn readFileAbsolute(io: std.Io, allocator: std.mem.Allocator, path: []const u8, 
     return buf;
 }
 
-fn loadFirstPet(io: std.Io, allocator: std.mem.Allocator) !PetFile {
-    const home = env_home orelse return error.NoHome;
-    const wanted = env_wanted_pet;
+fn petNameOk(name: []const u8) bool {
+    if (name.len == 0 or name.len > 63) return false;
+    for (name) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.')) return false;
+    }
+    return true;
+}
+
+/// Scan both pet roots into the catalog (name + which root), sorted by
+/// scan order. Runs once in main() with the io handle.
+fn scanCatalog(io: std.Io, allocator: std.mem.Allocator) void {
+    const home = env_home orelse return;
     const roots = [_][]const u8{ ".petdex/pets", ".codex/pets" };
-    const exts = [_][]const u8{ "spritesheet.webp", "spritesheet.png" };
     for (roots) |root| {
-        const root_path = try std.fs.path.join(allocator, &.{ home, root });
+        const root_path = std.fs.path.join(allocator, &.{ home, root }) catch continue;
         defer allocator.free(root_path);
         var dir = std.Io.Dir.openDirAbsolute(io, root_path, .{ .iterate = true }) catch continue;
         defer dir.close(io);
         var it = dir.iterate();
-        while (try it.next(io)) |entry| {
+        while (it.next(io) catch null) |entry| {
             if (entry.kind != .directory) continue;
-            if (wanted) |w| {
-                if (!std.mem.eql(u8, entry.name, w)) continue;
+            if (!petNameOk(entry.name)) continue;
+            if (catalog_len >= max_catalog) return;
+            var duplicate = false;
+            for (catalog[0..catalog_len]) |*existing| {
+                if (std.mem.eql(u8, existing.slice(), entry.name)) duplicate = true;
             }
-            for (exts) |ext| {
-                const sheet_path = std.fs.path.join(allocator, &.{ root_path, entry.name, ext }) catch continue;
-                var probe = std.Io.Dir.openFileAbsolute(io, sheet_path, .{}) catch {
-                    allocator.free(sheet_path);
-                    continue;
-                };
-                probe.close(io);
-                const name = try allocator.dupe(u8, entry.name);
-                return .{ .name = name, .sheet_path = sheet_path };
-            }
+            if (duplicate) continue;
+            var e = &catalog[catalog_len];
+            @memcpy(e.name[0..entry.name.len], entry.name);
+            e.len = entry.name.len;
+            @memcpy(e.root[0..root.len], root);
+            e.root_len = root.len;
+            catalog_len += 1;
         }
     }
-    return error.NoPetInstalled;
 }
 
 var boot_allocator: std.mem.Allocator = std.heap.page_allocator;
 var boot_io: ?std.Io = null;
 var pet_display_name: []const u8 = "";
 
-/// Convert the sheet to TGA via sips (macOS dev shim, see Sheet) and
-/// decode it into the global `sheet`. Runs in main() before the app
-/// loop; V5 replaces the sips step with vendored libwebp.
-fn loadSheetPixels(io: std.Io, allocator: std.mem.Allocator, environ_map: *std.process.Environ.Map) !void {
-    const pet = try loadFirstPet(io, allocator);
-    pet_display_name = pet.name;
-    defer allocator.free(pet.sheet_path);
+fn settingsPath(buf: []u8) ?[]const u8 {
+    const home = env_home orelse return null;
+    return std.fmt.bufPrint(buf, "{s}/.petdex/desktop-native-settings.json", .{home}) catch null;
+}
 
-    const tmp = environ_map.get("TMPDIR") orelse "/tmp";
-    // Pet-scoped temp name so two instances (or two pets) never race
-    // on the same conversion output.
-    const tga_name = try std.fmt.allocPrint(allocator, "petdex-native-{s}.tga", .{pet.name});
-    defer allocator.free(tga_name);
-    const tga_path = try std.fs.path.join(allocator, &.{ tmp, tga_name });
-    defer allocator.free(tga_path);
+/// Tiny std.c file helpers usable from the runtime thread (std.Io
+/// stays on the main thread; these mirror hook_server's).
+fn cReadFile(path: []const u8, buf: []u8) ?[]const u8 {
+    var path_buf: [512]u8 = undefined;
+    const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path}) catch return null;
+    const fd = std.c.open(path_z, .{ .ACCMODE = .RDONLY });
+    if (fd < 0) return null;
+    defer _ = std.c.close(fd);
+    var total: usize = 0;
+    while (total < buf.len) {
+        const n = std.c.read(fd, buf[total..].ptr, buf.len - total);
+        if (n <= 0) break;
+        total += @intCast(n);
+    }
+    if (total == 0) return null;
+    return buf[0..total];
+}
 
-    const argv = [_][]const u8{ "/usr/bin/sips", "-s", "format", "tga", pet.sheet_path, "--out", tga_path };
-    var child = try std.process.spawn(io, .{
-        .argv = &argv,
-        .environ_map = environ_map,
-        .stdin = .ignore,
-        .stdout = .ignore,
-        .stderr = .ignore,
-    });
-    const term = try child.wait(io);
-    if (term != .exited or term.exited != 0) return error.SheetConvertFailed;
+fn cWriteFile(path: []const u8, bytes: []const u8) void {
+    var path_buf: [512]u8 = undefined;
+    const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path}) catch return;
+    const fd = std.c.open(path_z, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
+    if (fd < 0) return;
+    defer _ = std.c.close(fd);
+    var off: usize = 0;
+    while (off < bytes.len) {
+        const n = std.c.write(fd, bytes.ptr + off, bytes.len - off);
+        if (n <= 0) return;
+        off += @intCast(n);
+    }
+}
 
-    const tga_bytes = try readFileAbsolute(io, allocator, tga_path, 64 * 1024 * 1024);
-    defer allocator.free(tga_bytes);
-    sheet = try parseTga(allocator, tga_bytes);
-    // v2 atlases (8x11, look rows below the states) are taller: same
-    // 192x208 frame, more rows. Detect by aspect.
+fn saveSettings(model: *const Model) void {
+    var path_buf: [512]u8 = undefined;
+    const path = settingsPath(&path_buf) orelse return;
+    var buf: [256]u8 = undefined;
+    const active = if (model.active_pet < catalog_len) catalog[model.active_pet].slice() else "";
+    const json = std.fmt.bufPrint(&buf, "{{\"active_pet\":\"{s}\",\"scale\":{d:.2}}}", .{ active, model.scale }) catch return;
+    cWriteFile(path, json);
+}
+
+/// Convert + decode a pet's sheet from the runtime thread: blocking
+/// sips via std.c.system (a pet switch is a user action, a ~200ms
+/// hitch is fine), then the TGA parse. Names come from directory
+/// scans and are charset-restricted, so the command is injection-safe.
+fn loadSheetForPet(entry: *const CatalogEntry) bool {
+    const home = env_home orelse return false;
+    var cmd_buf: [1024]u8 = undefined;
+    const tmp = "/tmp";
+    var tga_buf: [256]u8 = undefined;
+    const tga_path = std.fmt.bufPrint(&tga_buf, "{s}/petdex-native-{s}.tga", .{ tmp, entry.slice() }) catch return false;
+    var found = false;
+    const exts = [_][]const u8{ "spritesheet.webp", "spritesheet.png" };
+    for (exts) |ext| {
+        const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}/{s}/{s}/{s}' --out '{s}' >/dev/null 2>&1", .{ home, entry.rootSlice(), entry.slice(), ext, tga_path }) catch continue;
+        if (system(cmd) == 0) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) return false;
+    const tga_heap = boot_allocator.alloc(u8, 64 * 1024 * 1024) catch return false;
+    defer boot_allocator.free(tga_heap);
+    const tga_bytes = cReadFile(tga_path, tga_heap) orelse return false;
+    const parsed = parseTga(boot_allocator, tga_bytes) catch return false;
+    if (sheet.pixels.len > 0) boot_allocator.free(sheet.pixels);
+    sheet = parsed;
     sheet.rows = if (sheet.height * 1536 >= sheet.width * 2288) 11 else 9;
+    return true;
+}
+
+var initial_scale: f32 = 0.7;
+var initial_pet: u32 = 0;
+
+/// Boot-time load: scan the catalog, pick the initial pet
+/// (PETDEX_PET env > persisted settings > first found), and decode its
+/// sheet through the shared runtime-thread-safe path.
+fn loadSheetPixels(io: std.Io, allocator: std.mem.Allocator, environ_map: *std.process.Environ.Map) !void {
+    _ = environ_map;
+    scanCatalog(io, allocator);
+    if (catalog_len == 0) return error.NoPetInstalled;
+
+    var wanted: []const u8 = "";
+    var settings_buf: [512]u8 = undefined;
+    var path_buf: [512]u8 = undefined;
+    if (env_wanted_pet) |w| {
+        wanted = w;
+    } else if (settingsPath(&path_buf)) |path| {
+        if (cReadFile(path, &settings_buf)) |json| {
+            if (hook_server.jsonStringPub(json, "active_pet")) |v| wanted = v;
+            if (hook_server.jsonNumberPub(json, "scale")) |v| {
+                if (v >= 0.3 and v <= 1.5) initial_scale = @floatCast(v);
+            }
+        }
+    }
+    var index: usize = 0;
+    if (wanted.len > 0) {
+        for (catalog[0..catalog_len], 0..) |*entry, i| {
+            if (std.mem.eql(u8, entry.slice(), wanted)) index = i;
+        }
+    }
+    initial_pet = @intCast(index);
+    if (!loadSheetForPet(&catalog[index])) return error.SheetConvertFailed;
+    pet_display_name = catalog[index].slice();
 }
 
 /// Register the active state's frames into slots 1..count (replace in
@@ -428,6 +541,8 @@ pub fn boot(model: *Model, fx: *Effects) void {
         .on_fire = Effects.timerMsg(.poll_tick),
     });
     if (sheet.pixels.len == 0) return;
+    model.scale = initial_scale;
+    model.active_pet = initial_pet;
     registerStateFrames(model.state, fx);
     model.sheet_loaded = true;
     const n = @min(pet_display_name.len, model.pet_name.len);
@@ -493,6 +608,29 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .cycle_state => {
             applyState(model, model.state.next(), 0, fx);
+        },
+        .open_settings => model.settings_open = true,
+        .settings_closed => model.settings_open = false,
+        .close_pet => fx.closeWindow("main"),
+        .select_pet => |index| {
+            if (index >= catalog_len or index == model.active_pet) return;
+            if (!loadSheetForPet(&catalog[index])) return;
+            model.active_pet = index;
+            model.frame_index = 0;
+            registerStateFrames(model.state, fx);
+            armFrameTimer(model, fx);
+            saveSettings(model);
+        },
+        .set_scale => |fraction| {
+            model.scale = 0.4 + fraction * 0.8;
+            saveSettings(model);
+        },
+        .open_pets_folder => {
+            if (env_home) |home| {
+                var buf: [512]u8 = undefined;
+                const cmd = std.fmt.bufPrintZ(&buf, "/usr/bin/open '{s}/.petdex/pets'", .{home}) catch return;
+                _ = system(cmd);
+            }
         },
         .frame_clock => {
             if (!model.sheet_loaded) return;
@@ -560,8 +698,12 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 model.last_physics_ms = now;
                 return;
             }
-            const inside = read.cursor_x >= read.x and read.cursor_x <= read.x + frame_w and
-                read.cursor_y >= read.y and read.cursor_y <= read.y + frame_h;
+            const pet_w = frame_w * model.scale;
+            const pet_h = frame_h * model.scale;
+            const left = read.x + (frame_w - pet_w) / 2.0;
+            const top = read.y + (frame_h - pet_h);
+            const inside = read.cursor_x >= left and read.cursor_x <= left + pet_w and
+                read.cursor_y >= top and read.cursor_y <= top + pet_h;
             if (read.primary_down and !model.primary_was_down and inside) {
                 model.dragging = true;
                 model.grab_dx = read.cursor_x - read.x;
@@ -627,19 +769,90 @@ pub fn petTokens(model: *const Model) canvas.DesignTokens {
     return tokens;
 }
 
+const pet_menu = [_]AppUi.ContextMenuItem{
+    .{ .label = "Open Settings", .msg = .open_settings },
+    .{ .label = "Close Pet", .msg = .close_pet },
+};
+
 pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     if (!model.sheet_loaded) {
         return ui.panel(.{ .width = frame_w, .height = frame_h, .semantics = .{ .label = "No pet installed" } }, .{});
     }
+    const w = frame_w * model.scale;
+    const h = frame_h * model.scale;
     var node = ui.image(.{
-        .width = frame_w,
-        .height = frame_h,
+        .width = w,
+        .height = h,
         .image = @intCast(model.frame_index + 1),
+        .context_menu = &pet_menu,
         .semantics = .{ .label = "Petdex pet" },
     });
     node.widget.image_fit = .stretch;
     node.widget.image_sampling = .nearest;
-    return node;
+    // Bottom-center anchored: a smaller pet still stands on the same
+    // ground line instead of floating at the window's top-left.
+    return ui.column(.{ .grow = 1, .main = .end, .cross = .center }, .{node});
+}
+
+// --------------------------------------------------------- settings window
+
+const settings_window_label = "settings";
+const settings_canvas_label = "settings-canvas";
+
+fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []const PetdexApp.WindowDescriptor {
+    var count: usize = 0;
+    if (model.settings_open) {
+        scratch.windows[count] = .{
+            .label = settings_window_label,
+            .canvas_label = settings_canvas_label,
+            .title = "Petdex Settings",
+            .width = 420,
+            .height = 640,
+            .resizable = false,
+            .on_close = .settings_closed,
+        };
+        count += 1;
+    }
+    return scratch.windows[0..count];
+}
+
+fn petdexWindowView(ui: *PetdexApp.Ui, model: *const Model, window_label: []const u8) PetdexApp.Ui.Node {
+    std.debug.assert(std.mem.eql(u8, window_label, settings_window_label));
+    return settingsView(ui, model);
+}
+
+fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
+    var rows: [max_catalog]AppUi.Node = undefined;
+    const shown = @min(catalog_len, max_catalog);
+    for (catalog[0..shown], 0..) |*entry, i| {
+        const active = i == model.active_pet;
+        rows[i] = ui.el(.list_item, .{
+            .height = 30,
+            .on_press = Msg{ .select_pet = @intCast(i) },
+            .selected = active,
+            .semantics = .{ .label = entry.slice() },
+        }, .{
+            ui.text(.{ .grow = 1 }, entry.slice()),
+            ui.text(.{}, if (active) "Active" else ""),
+        });
+    }
+    const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
+    return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
+        ui.text(.{ .size = .heading }, "Pets"),
+        ui.scroll(.{ .grow = 1 }, rows[0..shown]),
+        ui.separator(.{}),
+        ui.text(.{ .size = .heading }, "Appearance"),
+        ui.row(.{ .cross = .center, .gap = 12 }, .{
+            ui.text(.{ .grow = 1 }, "Pet size"),
+            ui.el(.slider, .{ .width = 160, .value = scale_fraction, .on_value = AppUi.valueMsg(.set_scale), .semantics = .{ .label = "Pet size" } }, .{}),
+        }),
+        ui.separator(.{}),
+        ui.text(.{ .size = .heading }, "Custom pets"),
+        ui.row(.{ .cross = .center, .gap = 12 }, .{
+            ui.text(.{ .grow = 1 }, "~/.petdex/pets"),
+            ui.button(.{ .on_press = .open_pets_folder }, "Open folder"),
+        }),
+    });
 }
 
 // -------------------------------------------------------------------- app
@@ -663,6 +876,8 @@ pub fn main(init: std.process.Init) !void {
         .on_key = onKey,
         .on_command = onCommand,
         .on_frame = onFrame,
+        .windows_fn = petdexWindows,
+        .window_view = petdexWindowView,
         .tokens_fn = petTokens,
     });
     defer app_state.destroy();

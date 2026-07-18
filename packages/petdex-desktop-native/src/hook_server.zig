@@ -420,6 +420,14 @@ fn headerValueInt(head: []const u8, name: []const u8) ?usize {
 /// enum words and bubble text is capped ASCII-ish) and "key":number.
 /// Escaped quotes in bubble text truncate at the escape, which only
 /// shortens the bubble, never corrupts memory.
+pub fn jsonStringPub(body: []const u8, key: []const u8) ?[]const u8 {
+    return jsonString(body, key);
+}
+
+pub fn jsonNumberPub(body: []const u8, key: []const u8) ?f64 {
+    return jsonNumber(body, key);
+}
+
 fn jsonString(body: []const u8, key: []const u8) ?[]const u8 {
     var pat_buf: [32]u8 = undefined;
     const pat = std.fmt.bufPrint(&pat_buf, "\"{s}\"", .{key}) catch return null;
