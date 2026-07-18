@@ -109,9 +109,11 @@ fn stateDef(state: State) StateDef {
 pub const Msg = union(enum) {
     frame_tick: native_sdk.EffectTimer,
     poll_tick: native_sdk.EffectTimer,
+    physics_tick: native_sdk.EffectTimer,
+    frame_clock,
     cycle_state,
 
-    pub const view_unbound = .{ "frame_tick", "poll_tick", "cycle_state" };
+    pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
 };
 
 pub const Model = struct {
@@ -126,7 +128,28 @@ pub const Model = struct {
     shown_at_ms: i64 = 0,
     shown_dwell_ms: u32 = 0,
     bubble: hook_server.Bubble = .{},
+    // Drag + momentum, the old desktop's "Codex parity" physics: the
+    // frame clock samples the window origin and the primary button
+    // through fx.moveWindow(0,0); a down->up edge computes the release
+    // velocity from the last 100ms of samples and the physics timer
+    // throws the window with friction until it slows or hits an edge.
+    samples: [16]PosSample = @splat(.{}),
+    sample_len: usize = 0,
+    primary_was_down: bool = false,
+    throwing: bool = false,
+    vx: f64 = 0,
+    vy: f64 = 0,
+    throw_elapsed_ms: u32 = 0,
 };
+
+pub const PosSample = struct { x: f64 = 0, y: f64 = 0, t_ms: i64 = 0 };
+
+const physics_timer_key: u64 = 3;
+const physics_tick_ms: u32 = 16;
+const physics_friction: f64 = 0.88;
+const physics_min_vel: f64 = 65;
+const physics_max_duration_ms: u32 = 900;
+const sample_window_ms: i64 = 100;
 
 pub const Effects = native_sdk.Effects(Msg);
 
@@ -404,6 +427,46 @@ pub fn boot(model: *Model, fx: *Effects) void {
     armFrameTimer(model, fx);
 }
 
+fn pushSample(model: *Model, x: f64, y: f64, now: i64) void {
+    // Keep only samples inside the window, then append.
+    var kept: usize = 0;
+    for (model.samples[0..model.sample_len]) |sample| {
+        if (now - sample.t_ms <= sample_window_ms) {
+            model.samples[kept] = sample;
+            kept += 1;
+        }
+    }
+    if (kept == model.samples.len) {
+        std.mem.copyForwards(PosSample, model.samples[0 .. kept - 1], model.samples[1..kept]);
+        kept -= 1;
+    }
+    model.samples[kept] = .{ .x = x, .y = y, .t_ms = now };
+    model.sample_len = kept + 1;
+}
+
+/// The old renderer's computeVelocity: last sample against the newest
+/// one older than 16ms, in points per second.
+fn releaseVelocity(model: *const Model) ?struct { x: f64, y: f64 } {
+    if (model.sample_len < 2) return null;
+    const last = model.samples[model.sample_len - 1];
+    var first: ?PosSample = null;
+    for (model.samples[0..model.sample_len]) |sample| {
+        if (last.t_ms - sample.t_ms > 16) first = sample;
+    }
+    const anchor = first orelse return null;
+    const dt_sec = @as(f64, @floatFromInt(last.t_ms - anchor.t_ms)) / 1000.0;
+    if (dt_sec <= 0) return null;
+    return .{ .x = (last.x - anchor.x) / dt_sec, .y = (last.y - anchor.y) / dt_sec };
+}
+
+fn setThrowState(model: *Model, state: State, fx: *Effects) void {
+    if (model.state == state) return;
+    model.state = state;
+    model.frame_index = 0;
+    registerStateFrames(state, fx);
+    armFrameTimer(model, fx);
+}
+
 pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
     switch (msg) {
         .frame_tick => |timer| {
@@ -415,6 +478,58 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .cycle_state => {
             applyState(model, model.state.next(), 0, fx);
+        },
+        .frame_clock => {
+            if (!model.sheet_loaded or model.throwing) return;
+            const read = fx.moveWindow("main", 0, 0, false) orelse return;
+            const now = fx.wallMs();
+            pushSample(model, read.x, read.y, now);
+            const released = model.primary_was_down and !read.primary_down;
+            model.primary_was_down = read.primary_down;
+            if (!released) return;
+            const velocity = releaseVelocity(model) orelse return;
+            if (@abs(velocity.x) < 1 and @abs(velocity.y) < 1) return;
+            model.throwing = true;
+            model.vx = velocity.x;
+            model.vy = velocity.y;
+            model.throw_elapsed_ms = 0;
+            fx.startTimer(.{
+                .key = physics_timer_key,
+                .interval_ms = physics_tick_ms,
+                .mode = .one_shot,
+                .on_fire = Effects.timerMsg(.physics_tick),
+            });
+        },
+        .physics_tick => |timer| {
+            if (timer.outcome != .fired) return;
+            if (!model.throwing) return;
+            model.throw_elapsed_ms += physics_tick_ms;
+            const dt: f64 = @as(f64, physics_tick_ms) / 1000.0;
+            const moved = fx.moveWindow("main", model.vx * dt, model.vy * dt, true);
+            if (moved) |result| {
+                if (result.hit_x) model.vx = 0;
+                if (result.hit_y) model.vy = 0;
+            }
+            if (model.vx >= physics_min_vel) {
+                setThrowState(model, .@"running-right", fx);
+            } else if (model.vx <= -physics_min_vel) {
+                setThrowState(model, .@"running-left", fx);
+            }
+            model.vx *= physics_friction;
+            model.vy *= physics_friction;
+            const speed = @sqrt(model.vx * model.vx + model.vy * model.vy);
+            if (model.throw_elapsed_ms >= physics_max_duration_ms or speed < physics_min_vel) {
+                model.throwing = false;
+                model.sample_len = 0;
+                applyState(model, .waving, 1200, fx);
+                return;
+            }
+            fx.startTimer(.{
+                .key = physics_timer_key,
+                .interval_ms = physics_tick_ms,
+                .mode = .one_shot,
+                .on_fire = Effects.timerMsg(.physics_tick),
+            });
         },
         .poll_tick => |timer| {
             if (timer.outcome != .fired) return;
@@ -442,6 +557,12 @@ pub fn onKey(keyboard: canvas.WidgetKeyboardEvent) ?Msg {
     if (keyboard.modifiers.hasNavigationModifier() or keyboard.modifiers.shift) return null;
     if (std.ascii.eqlIgnoreCase(keyboard.key, "space")) return .cycle_state;
     return null;
+}
+
+pub fn onFrame(model: *const Model, frame: native_sdk.platform.GpuFrame) ?Msg {
+    _ = model;
+    _ = frame;
+    return .frame_clock;
 }
 
 pub fn onCommand(name: []const u8) ?Msg {
@@ -501,6 +622,7 @@ pub fn main(init: std.process.Init) !void {
         .view = rootView,
         .on_key = onKey,
         .on_command = onCommand,
+        .on_frame = onFrame,
         .tokens_fn = petTokens,
     });
     defer app_state.destroy();
