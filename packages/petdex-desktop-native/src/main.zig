@@ -39,6 +39,8 @@ const shell_windows = [_]native_sdk.ShellWindow{.{
     .resizable = false,
     .restore_state = false,
     .titlebar = .chromeless,
+    .floating = true,
+    .transparent = true,
     .views = &shell_views,
 }};
 const shell_scene: native_sdk.ShellConfig = .{ .windows = &shell_windows };
@@ -451,6 +453,16 @@ pub fn onCommand(name: []const u8) ?Msg {
 
 pub const AppUi = canvas.Ui(Msg);
 
+/// Transparent canvas: the clear color is the background token, so an
+/// alpha-0 background plus the window's `transparent` flag composites
+/// the pet straight over the desktop.
+pub fn petTokens(model: *const Model) canvas.DesignTokens {
+    _ = model;
+    var tokens = canvas.DesignTokens.theme(.{});
+    tokens.colors.background = canvas.Color.rgba(0, 0, 0, 0);
+    return tokens;
+}
+
 pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     if (!model.sheet_loaded) {
         return ui.panel(.{ .width = frame_w, .height = frame_h, .semantics = .{ .label = "No pet installed" } }, .{});
@@ -486,6 +498,7 @@ pub fn main(init: std.process.Init) !void {
         .view = rootView,
         .on_key = onKey,
         .on_command = onCommand,
+        .tokens_fn = petTokens,
     });
     defer app_state.destroy();
     app_state.model = .{};

@@ -17,6 +17,8 @@
                 .height = 208,
                 .resizable = false,
                 .titlebar = "chromeless",
+                .floating = true,
+                .transparent = true,
                 .restore_state = false,
                 .restore_policy = "center_on_primary",
                 .views = .{
