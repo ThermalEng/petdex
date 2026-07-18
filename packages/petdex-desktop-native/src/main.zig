@@ -753,6 +753,7 @@ pub fn onFrame(model: *const Model, frame: native_sdk.platform.GpuFrame) ?Msg {
 pub fn onCommand(name: []const u8) ?Msg {
     if (std.mem.eql(u8, name, "petdex.cycle")) return .cycle_state;
     if (std.mem.eql(u8, name, "petdex.settings")) return .open_settings;
+    if (std.mem.eql(u8, name, "petdex.close")) return .close_pet;
     return null;
 }
 
@@ -760,15 +761,7 @@ pub fn onCommand(name: []const u8) ?Msg {
 
 pub const AppUi = canvas.Ui(Msg);
 
-/// Transparent canvas: the clear color is the background token, so an
-/// alpha-0 background plus the window's `transparent` flag composites
-/// the pet straight over the desktop.
-pub fn petTokens(model: *const Model) canvas.DesignTokens {
-    _ = model;
-    var tokens = canvas.DesignTokens.theme(.{});
-    tokens.colors.background = canvas.Color.rgba(0, 0, 0, 0);
-    return tokens;
-}
+
 
 const pet_menu = [_]AppUi.ContextMenuItem{
     .{ .label = "Open Settings", .msg = .open_settings },
@@ -841,7 +834,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
     return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
-        ui.scroll(.{ .grow = 1 }, rows[0..shown]),
+        ui.scroll(.{ .grow = 1 }, .{ui.column(.{ .gap = 2 }, @as([]const AppUi.Node, rows[0..shown]))}),
         ui.separator(.{}),
         ui.text(.{ .size = .heading }, "Appearance"),
         ui.row(.{ .cross = .center, .gap = 12 }, .{
@@ -880,7 +873,6 @@ pub fn main(init: std.process.Init) !void {
         .on_frame = onFrame,
         .windows_fn = petdexWindows,
         .window_view = petdexWindowView,
-        .tokens_fn = petTokens,
     });
     defer app_state.destroy();
     app_state.model = .{};

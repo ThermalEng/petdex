@@ -7,9 +7,15 @@
     .icons = .{"assets/icon.png"},
     .platforms = .{ "macos", "windows", "linux" },
     .permissions = .{ "view", "command" },
-    .capabilities = .{ "native_views", "gpu_surfaces", "shortcuts" },
-    .shortcuts = .{
-        .{ .id = "petdex.settings", .key = ",", .modifiers = .{"primary"} },
+    .capabilities = .{ "native_views", "gpu_surfaces", "menus" },
+    .menus = .{
+        .{
+            .title = "Pet",
+            .items = .{
+                .{ .label = "Settings...", .command = "petdex.settings", .key = ",", .modifiers = .{"primary"} },
+                .{ .label = "Close Pet", .command = "petdex.close", .key = "w", .modifiers = .{"primary"} },
+            },
+        },
     },
     .shell = .{
         .windows = .{
