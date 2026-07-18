@@ -933,6 +933,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
             .height = 56,
             .padding = 8,
             .gap = 12,
+            .cross = .center,
             .on_press = Msg{ .select_pet = @intCast(i) },
             .selected = active,
             .style_tokens = .{ .background = .surface, .radius = .md },
@@ -943,11 +944,11 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
                 ui.text(.{}, entry.slice()),
                 ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, entry.rootSlice()),
             }),
-            ui.button(.{ .size = .sm, .on_press = Msg{ .open_pet_page = @intCast(i) } }, "Open"),
             if (active)
-                ui.text(.{ .style_tokens = .{ .foreground = .accent } }, "Active")
+                ui.button(.{ .size = .sm, .width = 64, .variant = .primary, .disabled = true }, "Active")
             else
-                ui.button(.{ .size = .sm, .on_press = Msg{ .select_pet = @intCast(i) } }, "Select"),
+                ui.button(.{ .size = .sm, .width = 64, .variant = .primary, .on_press = Msg{ .select_pet = @intCast(i) } }, "Select"),
+            ui.button(.{ .size = .sm, .variant = .secondary, .on_press = Msg{ .open_pet_page = @intCast(i) } }, "Open"),
         });
     }
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
