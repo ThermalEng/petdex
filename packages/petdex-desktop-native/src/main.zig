@@ -120,6 +120,7 @@ pub const Msg = union(enum) {
     select_pet: u32,
     set_scale: f32,
     open_pets_folder,
+    open_pet_page: u32,
     noop,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
@@ -410,26 +411,52 @@ fn saveSettings(model: *const Model) void {
     cWriteFile(path, json);
 }
 
+/// Convert a pet's sheet to the cached /tmp TGA. sips exits 0 even on
+/// a missing input, so success is the OUTPUT existing, never the exit
+/// code. Prefers pet.json's spritesheetPath, then the standard names.
+fn convertPetToTga(entry: *const CatalogEntry, tga_path: []const u8) bool {
+    const home = env_home orelse return false;
+    var cmd_buf: [1024]u8 = undefined;
+    var probe: [1]u8 = undefined;
+    if (cReadFile(tga_path, &probe) != null) return true;
+
+    var candidates_buf: [3][64]u8 = undefined;
+    var candidates: [3][]const u8 = undefined;
+    var candidate_count: usize = 0;
+    var json_buf: [1024]u8 = undefined;
+    var pj_path: [512]u8 = undefined;
+    if (std.fmt.bufPrint(&pj_path, "{s}/{s}/{s}/pet.json", .{ home, entry.rootSlice(), entry.slice() })) |pjp| {
+        if (cReadFile(pjp, &json_buf)) |json| {
+            if (hook_server.jsonStringPub(json, "spritesheetPath")) |sp| {
+                if (petNameOk(sp) and sp.len < 64) {
+                    @memcpy(candidates_buf[candidate_count][0..sp.len], sp);
+                    candidates[candidate_count] = candidates_buf[candidate_count][0..sp.len];
+                    candidate_count += 1;
+                }
+            }
+        }
+    } else |_| {}
+    candidates[candidate_count] = "spritesheet.webp";
+    candidate_count += 1;
+    candidates[candidate_count] = "spritesheet.png";
+    candidate_count += 1;
+
+    for (candidates[0..candidate_count]) |name| {
+        const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}/{s}/{s}/{s}' --out '{s}' >/dev/null 2>&1", .{ home, entry.rootSlice(), entry.slice(), name, tga_path }) catch continue;
+        _ = system(cmd);
+        if (cReadFile(tga_path, &probe) != null) return true;
+    }
+    return false;
+}
+
 /// Convert + decode a pet's sheet from the runtime thread: blocking
 /// sips via std.c.system (a pet switch is a user action, a ~200ms
 /// hitch is fine), then the TGA parse. Names come from directory
 /// scans and are charset-restricted, so the command is injection-safe.
 fn loadSheetForPet(entry: *const CatalogEntry) bool {
-    const home = env_home orelse return false;
-    var cmd_buf: [1024]u8 = undefined;
-    const tmp = "/tmp";
     var tga_buf: [256]u8 = undefined;
-    const tga_path = std.fmt.bufPrint(&tga_buf, "{s}/petdex-native-{s}.tga", .{ tmp, entry.slice() }) catch return false;
-    var found = false;
-    const exts = [_][]const u8{ "spritesheet.webp", "spritesheet.png" };
-    for (exts) |ext| {
-        const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}/{s}/{s}/{s}' --out '{s}' >/dev/null 2>&1", .{ home, entry.rootSlice(), entry.slice(), ext, tga_path }) catch continue;
-        if (system(cmd) == 0) {
-            found = true;
-            break;
-        }
-    }
-    if (!found) return false;
+    const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-{s}.tga", .{entry.slice()}) catch return false;
+    if (!convertPetToTga(entry, tga_path)) return false;
     const tga_heap = boot_allocator.alloc(u8, 64 * 1024 * 1024) catch return false;
     defer boot_allocator.free(tga_heap);
     const tga_bytes = cReadFile(tga_path, tga_heap) orelse return false;
@@ -458,25 +485,9 @@ var thumbs_built: usize = 0;
 /// Decode one pet's sheet without touching the live global (the pet
 /// keeps animating from its own frames). Same sips shim + TGA parse.
 fn decodeSheetForThumb(entry: *const CatalogEntry) ?Sheet {
-    const home = env_home orelse return null;
-    var cmd_buf: [1024]u8 = undefined;
     var tga_buf: [256]u8 = undefined;
     const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-{s}.tga", .{entry.slice()}) catch return null;
-    var have_tga = false;
-    // The conversion caches in /tmp per pet: reuse when present.
-    var probe_buf: [1]u8 = undefined;
-    if (cReadFile(tga_path, &probe_buf) != null) have_tga = true;
-    if (!have_tga) {
-        const exts = [_][]const u8{ "spritesheet.webp", "spritesheet.png" };
-        for (exts) |ext| {
-            const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}/{s}/{s}/{s}' --out '{s}' >/dev/null 2>&1", .{ home, entry.rootSlice(), entry.slice(), ext, tga_path }) catch continue;
-            if (system(cmd) == 0) {
-                have_tga = true;
-                break;
-            }
-        }
-    }
-    if (!have_tga) return null;
+    if (!convertPetToTga(entry, tga_path)) return null;
     const heap = boot_allocator.alloc(u8, 64 * 1024 * 1024) catch return null;
     defer boot_allocator.free(heap);
     const bytes = cReadFile(tga_path, heap) orelse return null;
@@ -695,6 +706,12 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .set_scale => |fraction| {
             model.scale = 0.4 + fraction * 0.8;
             saveSettings(model);
+        },
+        .open_pet_page => |index| {
+            if (index >= catalog_len) return;
+            var buf: [256]u8 = undefined;
+            const cmd = std.fmt.bufPrintZ(&buf, "/usr/bin/open 'https://petdex.dev/pets/{s}'", .{catalog[index].slice()}) catch return;
+            _ = system(cmd);
         },
         .noop => {},
         .open_pets_folder => {
@@ -915,6 +932,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
         rows[i] = ui.el(.list_item, .{
             .height = 56,
             .padding = 8,
+            .gap = 12,
             .on_press = Msg{ .select_pet = @intCast(i) },
             .selected = active,
             .style_tokens = .{ .background = .surface, .radius = .md },
@@ -925,7 +943,11 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
                 ui.text(.{}, entry.slice()),
                 ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, entry.rootSlice()),
             }),
-            ui.text(.{ .style_tokens = .{ .foreground = .accent } }, if (active) "Active" else ""),
+            ui.button(.{ .size = .sm, .on_press = Msg{ .open_pet_page = @intCast(i) } }, "Open"),
+            if (active)
+                ui.text(.{ .style_tokens = .{ .foreground = .accent } }, "Active")
+            else
+                ui.button(.{ .size = .sm, .on_press = Msg{ .select_pet = @intCast(i) } }, "Select"),
         });
     }
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
