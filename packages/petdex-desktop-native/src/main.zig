@@ -140,6 +140,15 @@ pub const Model = struct {
     vx: f64 = 0,
     vy: f64 = 0,
     throw_elapsed_ms: u32 = 0,
+    last_physics_ms: i64 = 0,
+    // App-owned drag (the old renderer's model, over the moveWindow
+    // verb): grab offset from the window origin to the cursor at
+    // press, followed every frame while the button holds. Native
+    // performWindowDrag is deliberately not used: it swallows the
+    // gesture where neither velocity nor tests can see it.
+    dragging: bool = false,
+    grab_dx: f64 = 0,
+    grab_dy: f64 = 0,
 };
 
 pub const PosSample = struct { x: f64 = 0, y: f64 = 0, t_ms: i64 = 0 };
@@ -449,9 +458,15 @@ fn pushSample(model: *Model, x: f64, y: f64, now: i64) void {
 fn releaseVelocity(model: *const Model) ?struct { x: f64, y: f64 } {
     if (model.sample_len < 2) return null;
     const last = model.samples[model.sample_len - 1];
+    // Oldest sample in the window older than one tick, the old
+    // renderer's anchor: velocity averages the whole 100ms gesture
+    // tail instead of chasing the last two frames.
     var first: ?PosSample = null;
     for (model.samples[0..model.sample_len]) |sample| {
-        if (last.t_ms - sample.t_ms > 16) first = sample;
+        if (last.t_ms - sample.t_ms > 16) {
+            first = sample;
+            break;
+        }
     }
     const anchor = first orelse return null;
     const dt_sec = @as(f64, @floatFromInt(last.t_ms - anchor.t_ms)) / 1000.0;
@@ -480,56 +495,84 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             applyState(model, model.state.next(), 0, fx);
         },
         .frame_clock => {
-            if (!model.sheet_loaded or model.throwing) return;
-            const read = fx.moveWindow("main", 0, 0, false) orelse return;
+            if (!model.sheet_loaded) return;
             const now = fx.wallMs();
-            pushSample(model, read.x, read.y, now);
-            const released = model.primary_was_down and !read.primary_down;
-            model.primary_was_down = read.primary_down;
-            if (!released) return;
-            const velocity = releaseVelocity(model) orelse return;
-            if (@abs(velocity.x) < 1 and @abs(velocity.y) < 1) return;
-            model.throwing = true;
-            model.vx = velocity.x;
-            model.vy = velocity.y;
-            model.throw_elapsed_ms = 0;
-            fx.startTimer(.{
-                .key = physics_timer_key,
-                .interval_ms = physics_tick_ms,
-                .mode = .one_shot,
-                .on_fire = Effects.timerMsg(.physics_tick),
-            });
-        },
-        .physics_tick => |timer| {
-            if (timer.outcome != .fired) return;
-            if (!model.throwing) return;
-            model.throw_elapsed_ms += physics_tick_ms;
-            const dt: f64 = @as(f64, physics_tick_ms) / 1000.0;
-            const moved = fx.moveWindow("main", model.vx * dt, model.vy * dt, true);
-            if (moved) |result| {
-                if (result.hit_x) model.vx = 0;
-                if (result.hit_y) model.vy = 0;
-            }
-            if (model.vx >= physics_min_vel) {
-                setThrowState(model, .@"running-right", fx);
-            } else if (model.vx <= -physics_min_vel) {
-                setThrowState(model, .@"running-left", fx);
-            }
-            model.vx *= physics_friction;
-            model.vy *= physics_friction;
-            const speed = @sqrt(model.vx * model.vx + model.vy * model.vy);
-            if (model.throw_elapsed_ms >= physics_max_duration_ms or speed < physics_min_vel) {
-                model.throwing = false;
-                model.sample_len = 0;
-                applyState(model, .waving, 1200, fx);
+            if (model.throwing) {
+                // Momentum rides the frame clock with the real elapsed
+                // time: no timer jitter, friction scaled per frame.
+                var dt_ms = now - model.last_physics_ms;
+                if (dt_ms <= 0) return;
+                if (dt_ms > 50) dt_ms = 50;
+                model.last_physics_ms = now;
+                model.throw_elapsed_ms += @intCast(dt_ms);
+                const dt: f64 = @as(f64, @floatFromInt(dt_ms)) / 1000.0;
+                const moved = fx.moveWindow("main", model.vx * dt, model.vy * dt, true);
+                if (moved) |result| {
+                    if (result.hit_x) model.vx = 0;
+                    if (result.hit_y) model.vy = 0;
+                }
+                if (model.vx >= physics_min_vel) {
+                    setThrowState(model, .@"running-right", fx);
+                } else if (model.vx <= -physics_min_vel) {
+                    setThrowState(model, .@"running-left", fx);
+                }
+                const decay = std.math.pow(f64, physics_friction, dt * 1000.0 / @as(f64, physics_tick_ms));
+                model.vx *= decay;
+                model.vy *= decay;
+                const speed = @sqrt(model.vx * model.vx + model.vy * model.vy);
+                if (model.throw_elapsed_ms >= physics_max_duration_ms or speed < physics_min_vel) {
+                    model.throwing = false;
+                    applyState(model, .waving, 1200, fx);
+                }
                 return;
             }
-            fx.startTimer(.{
-                .key = physics_timer_key,
-                .interval_ms = physics_tick_ms,
-                .mode = .one_shot,
-                .on_fire = Effects.timerMsg(.physics_tick),
-            });
+            const read = fx.moveWindow("main", 0, 0, false) orelse return;
+            if (model.dragging) {
+                if (read.primary_down) {
+                    // Follow the cursor keeping the grab offset, and
+                    // record OUR OWN applied positions: the app drives
+                    // the drag, so it has perfect knowledge of the
+                    // gesture, no host telemetry involved.
+                    const dx = (read.cursor_x - model.grab_dx) - read.x;
+                    const dy = (read.cursor_y - model.grab_dy) - read.y;
+                    if (dx != 0 or dy != 0) {
+                        if (fx.moveWindow("main", dx, dy, false)) |moved| {
+                            pushSample(model, moved.x, moved.y, now);
+                        }
+                    } else {
+                        pushSample(model, read.x, read.y, now);
+                    }
+                    return;
+                }
+                // Release: velocity from our own 100ms sample tail,
+                // the WebView renderer's computeVelocity semantics.
+                model.dragging = false;
+                const velocity = releaseVelocity(model) orelse {
+                    model.sample_len = 0;
+                    return;
+                };
+                model.sample_len = 0;
+                if (@abs(velocity.x) < 1 and @abs(velocity.y) < 1) return;
+                model.throwing = true;
+                model.vx = velocity.x;
+                model.vy = velocity.y;
+                model.throw_elapsed_ms = 0;
+                model.last_physics_ms = now;
+                return;
+            }
+            const inside = read.cursor_x >= read.x and read.cursor_x <= read.x + frame_w and
+                read.cursor_y >= read.y and read.cursor_y <= read.y + frame_h;
+            if (read.primary_down and !model.primary_was_down and inside) {
+                model.dragging = true;
+                model.grab_dx = read.cursor_x - read.x;
+                model.grab_dy = read.cursor_y - read.y;
+                model.sample_len = 0;
+                pushSample(model, read.x, read.y, now);
+            }
+            model.primary_was_down = read.primary_down;
+        },
+        .physics_tick => |timer| {
+            _ = timer;
         },
         .poll_tick => |timer| {
             if (timer.outcome != .fired) return;
@@ -596,9 +639,6 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     });
     node.widget.image_fit = .stretch;
     node.widget.image_sampling = .nearest;
-    // The whole pet is a window-drag surface, the old desktop's
-    // behavior: grab boba anywhere and move him around the screen.
-    node.widget.window_drag = true;
     return node;
 }
 
