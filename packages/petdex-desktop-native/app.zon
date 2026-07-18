@@ -7,7 +7,10 @@
     .icons = .{"assets/icon.png"},
     .platforms = .{ "macos", "windows", "linux" },
     .permissions = .{ "view", "command" },
-    .capabilities = .{ "native_views", "gpu_surfaces" },
+    .capabilities = .{ "native_views", "gpu_surfaces", "shortcuts" },
+    .shortcuts = .{
+        .{ .id = "petdex.settings", .key = ",", .modifiers = .{"primary"} },
+    },
     .shell = .{
         .windows = .{
             .{

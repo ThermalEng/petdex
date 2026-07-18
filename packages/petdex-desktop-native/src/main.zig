@@ -752,6 +752,7 @@ pub fn onFrame(model: *const Model, frame: native_sdk.platform.GpuFrame) ?Msg {
 
 pub fn onCommand(name: []const u8) ?Msg {
     if (std.mem.eql(u8, name, "petdex.cycle")) return .cycle_state;
+    if (std.mem.eql(u8, name, "petdex.settings")) return .open_settings;
     return null;
 }
 
@@ -784,14 +785,15 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
         .width = w,
         .height = h,
         .image = @intCast(model.frame_index + 1),
-        .context_menu = &pet_menu,
         .semantics = .{ .label = "Petdex pet" },
     });
     node.widget.image_fit = .stretch;
     node.widget.image_sampling = .nearest;
     // Bottom-center anchored: a smaller pet still stands on the same
-    // ground line instead of floating at the window's top-left.
-    return ui.column(.{ .grow = 1, .main = .end, .cross = .center }, .{node});
+    // ground line instead of floating at the window's top-left. The
+    // context menu rides the root container: the image widget is
+    // display-only for hit testing, the column owns the right-click.
+    return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .context_menu = &pet_menu }, .{node});
 }
 
 // --------------------------------------------------------- settings window
