@@ -120,6 +120,7 @@ pub const Msg = union(enum) {
     select_pet: u32,
     set_scale: f32,
     open_pets_folder,
+    noop,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
 };
@@ -625,6 +626,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             model.scale = 0.4 + fraction * 0.8;
             saveSettings(model);
         },
+        .noop => {},
         .open_pets_folder => {
             if (env_home) |home| {
                 var buf: [512]u8 = undefined;
@@ -786,7 +788,11 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     // ground line instead of floating at the window's top-left. The
     // context menu rides the root container: the image widget is
     // display-only for hit testing, the column owns the right-click.
-    return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .context_menu = &pet_menu }, .{node});
+    // on_press makes the container a press claimer so the right-click
+    // fall-through resolves here and the context menu shows; the drag
+    // never rides widget presses (cursor polling), so a claimed press
+    // costs nothing.
+    return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{node});
 }
 
 // --------------------------------------------------------- settings window
@@ -852,6 +858,15 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
 
 // -------------------------------------------------------------------- app
 
+const app_menus = [_]native_sdk.platform.Menu{.{
+    .title = "Pet",
+    .items = &.{
+        .{ .label = "Settings...", .command = "petdex.settings", .key = ",", .modifiers = .{ .primary = true } },
+        .{ .separator = true },
+        .{ .label = "Close Pet", .command = "petdex.close", .key = "w", .modifiers = .{ .primary = true } },
+    },
+}};
+
 const PetdexApp = native_sdk.UiApp(Model, Msg);
 
 pub fn main(init: std.process.Init) !void {
@@ -885,6 +900,7 @@ pub fn main(init: std.process.Init) !void {
         .default_frame = geometry.RectF.init(0, 0, frame_w, frame_h),
         .restore_state = false,
         .js_window_api = false,
+        .menus = &app_menus,
         .security = .{
             .permissions = &app_permissions,
             .navigation = .{ .allowed_origins = &.{ "zero://inline", "zero://app" } },
