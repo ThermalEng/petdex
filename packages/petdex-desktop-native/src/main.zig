@@ -443,6 +443,76 @@ fn loadSheetForPet(entry: *const CatalogEntry) bool {
 var initial_scale: f32 = 0.7;
 var initial_pet: u32 = 0;
 
+// ------------------------------------------------------------- thumbnails
+// One atlas texture for every catalog thumbnail: the image registry
+// caps at 16 slots, so 28+ per-pet images can never each own one. A
+// 32-cell strip of 48x52 nearest-scaled idle frames is ~320KB, well
+// inside the 1MB slot bound, and rows draw their cell via image_src.
+const thumb_w: usize = 48;
+const thumb_h: usize = 52;
+const thumb_atlas_id: u64 = 12;
+var thumbs_pixels: []u8 = &.{};
+var thumbs_ready: [max_catalog]bool = @splat(false);
+var thumbs_built: usize = 0;
+
+/// Decode one pet's sheet without touching the live global (the pet
+/// keeps animating from its own frames). Same sips shim + TGA parse.
+fn decodeSheetForThumb(entry: *const CatalogEntry) ?Sheet {
+    const home = env_home orelse return null;
+    var cmd_buf: [1024]u8 = undefined;
+    var tga_buf: [256]u8 = undefined;
+    const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-{s}.tga", .{entry.slice()}) catch return null;
+    var have_tga = false;
+    // The conversion caches in /tmp per pet: reuse when present.
+    var probe_buf: [1]u8 = undefined;
+    if (cReadFile(tga_path, &probe_buf) != null) have_tga = true;
+    if (!have_tga) {
+        const exts = [_][]const u8{ "spritesheet.webp", "spritesheet.png" };
+        for (exts) |ext| {
+            const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}/{s}/{s}/{s}' --out '{s}' >/dev/null 2>&1", .{ home, entry.rootSlice(), entry.slice(), ext, tga_path }) catch continue;
+            if (system(cmd) == 0) {
+                have_tga = true;
+                break;
+            }
+        }
+    }
+    if (!have_tga) return null;
+    const heap = boot_allocator.alloc(u8, 64 * 1024 * 1024) catch return null;
+    defer boot_allocator.free(heap);
+    const bytes = cReadFile(tga_path, heap) orelse return null;
+    return parseTga(boot_allocator, bytes) catch null;
+}
+
+/// Build one thumbnail into the atlas and re-register it. Incremental:
+/// the poll timer builds one per tick while settings is open, so the
+/// pet never freezes behind a 28-conversion batch.
+fn buildNextThumb(fx: *Effects) void {
+    if (thumbs_built >= catalog_len) return;
+    const index = thumbs_built;
+    thumbs_built += 1;
+    if (thumbs_pixels.len == 0) {
+        thumbs_pixels = boot_allocator.alloc(u8, max_catalog * thumb_w * thumb_h * 4) catch return;
+        @memset(thumbs_pixels, 0);
+    }
+    const decoded = decodeSheetForThumb(&catalog[index]) orelse return;
+    defer boot_allocator.free(decoded.pixels);
+    const rows: usize = if (decoded.height * 1536 >= decoded.width * 2288) 11 else 9;
+    const fw = decoded.width / cols;
+    const fh = decoded.height / rows;
+    const atlas_row_len = max_catalog * thumb_w * 4;
+    for (0..thumb_h) |y| {
+        const src_y = y * fh / thumb_h;
+        for (0..thumb_w) |x| {
+            const src_x = x * fw / thumb_w;
+            const src_off = (src_y * decoded.width + src_x) * 4;
+            const dst_off = y * atlas_row_len + (index * thumb_w + x) * 4;
+            @memcpy(thumbs_pixels[dst_off..][0..4], decoded.pixels[src_off..][0..4]);
+        }
+    }
+    thumbs_ready[index] = true;
+    fx.registerImage(thumb_atlas_id, max_catalog * thumb_w, thumb_h, thumbs_pixels) catch {};
+}
+
 /// Boot-time load: scan the catalog, pick the initial pet
 /// (PETDEX_PET env > persisted settings > first found), and decode its
 /// sheet through the shared runtime-thread-safe path.
@@ -721,6 +791,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .poll_tick => |timer| {
             if (timer.outcome != .fired) return;
             if (!model.sheet_loaded) return;
+            if (model.settings_open and thumbs_built < catalog_len) buildNextThumb(fx);
             _ = hook_server.mailbox.takeBubble(&model.bubble);
             const now = fx.wallMs();
             const dwell_over = now - model.shown_at_ms >= model.shown_dwell_ms;
@@ -827,31 +898,58 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     const shown = @min(catalog_len, max_catalog);
     for (catalog[0..shown], 0..) |*entry, i| {
         const active = i == model.active_pet;
+        var thumb = ui.image(.{
+            .width = 40,
+            .height = 44,
+            .image = if (thumbs_ready[i]) thumb_atlas_id else 0,
+            .semantics = .{ .label = entry.slice() },
+        });
+        thumb.widget.image_src = geometry.RectF.init(
+            @as(f32, @floatFromInt(i * thumb_w)),
+            0,
+            @as(f32, @floatFromInt(thumb_w)),
+            @as(f32, @floatFromInt(thumb_h)),
+        );
+        thumb.widget.image_fit = .contain;
+        thumb.widget.image_sampling = .nearest;
         rows[i] = ui.el(.list_item, .{
-            .height = 30,
+            .height = 56,
+            .padding = 8,
             .on_press = Msg{ .select_pet = @intCast(i) },
             .selected = active,
+            .style_tokens = .{ .background = .surface, .radius = .md },
             .semantics = .{ .label = entry.slice() },
         }, .{
-            ui.text(.{ .grow = 1 }, entry.slice()),
-            ui.text(.{}, if (active) "Active" else ""),
+            thumb,
+            ui.column(.{ .grow = 1, .main = .center }, .{
+                ui.text(.{}, entry.slice()),
+                ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, entry.rootSlice()),
+            }),
+            ui.text(.{ .style_tokens = .{ .foreground = .accent } }, if (active) "Active" else ""),
         });
     }
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
     return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
-        ui.scroll(.{ .grow = 1 }, .{ui.column(.{ .gap = 2 }, @as([]const AppUi.Node, rows[0..shown]))}),
-        ui.separator(.{}),
+        ui.scroll(.{ .grow = 1 }, .{ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown]))}),
         ui.text(.{ .size = .heading }, "Appearance"),
-        ui.row(.{ .cross = .center, .gap = 12 }, .{
-            ui.text(.{ .grow = 1 }, "Pet size"),
-            ui.el(.slider, .{ .width = 160, .value = scale_fraction, .on_value = AppUi.valueMsg(.set_scale), .semantics = .{ .label = "Pet size" } }, .{}),
+        ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
+            ui.row(.{ .padding = 12, .cross = .center, .gap = 12 }, .{
+                ui.column(.{ .grow = 1 }, .{
+                    ui.text(.{}, "Pet size"),
+                    ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "Adjust the size of your pet"),
+                }),
+                ui.el(.slider, .{ .width = 150, .value = scale_fraction, .on_value = AppUi.valueMsg(.set_scale), .semantics = .{ .label = "Pet size" } }, .{}),
+            }),
         }),
-        ui.separator(.{}),
-        ui.text(.{ .size = .heading }, "Custom pets"),
-        ui.row(.{ .cross = .center, .gap = 12 }, .{
-            ui.text(.{ .grow = 1 }, "~/.petdex/pets"),
-            ui.button(.{ .on_press = .open_pets_folder }, "Open folder"),
+        ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
+            ui.row(.{ .padding = 12, .cross = .center, .gap = 12 }, .{
+                ui.column(.{ .grow = 1 }, .{
+                    ui.text(.{}, "Custom pets"),
+                    ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "~/.petdex/pets"),
+                }),
+                ui.button(.{ .on_press = .open_pets_folder }, "Open folder"),
+            }),
         }),
     });
 }
