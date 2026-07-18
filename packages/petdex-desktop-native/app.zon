@@ -22,8 +22,8 @@
             .{
                 .label = "main",
                 .title = "Petdex",
-                .width = 192,
-                .height = 208,
+                .width = 231,
+                .height = 250,
                 .resizable = false,
                 .titlebar = "chromeless",
                 .floating = true,

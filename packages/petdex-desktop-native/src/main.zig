@@ -26,6 +26,9 @@ const geometry = native_sdk.geometry;
 const canvas_label = "pet-canvas";
 const frame_w: f32 = 192;
 const frame_h: f32 = 208;
+const max_scale: f32 = 1.2;
+const win_w: f32 = frame_w * max_scale;
+const win_h: f32 = frame_h * max_scale;
 const cols: u64 = 8;
 const sheet_image_id: u64 = 1;
 
@@ -36,8 +39,8 @@ const shell_views = [_]native_sdk.ShellView{
 const shell_windows = [_]native_sdk.ShellWindow{.{
     .label = "main",
     .title = "Petdex",
-    .width = frame_w,
-    .height = frame_h,
+    .width = win_w,
+    .height = win_h,
     .resizable = false,
     .restore_state = false,
     .titlebar = .chromeless,
@@ -789,8 +792,8 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             }
             const pet_w = frame_w * model.scale;
             const pet_h = frame_h * model.scale;
-            const left = read.x + (frame_w - pet_w) / 2.0;
-            const top = read.y + (frame_h - pet_h);
+            const left = read.x + (win_w - pet_w) / 2.0;
+            const top = read.y + (win_h - pet_h);
             const inside = read.cursor_x >= left and read.cursor_x <= left + pet_w and
                 read.cursor_y >= top and read.cursor_y <= top + pet_h;
             if (read.primary_down and !model.primary_was_down and inside) {
@@ -1018,7 +1021,7 @@ pub fn main(init: std.process.Init) !void {
         .window_title = "Petdex",
         .bundle_id = "dev.petdex.desktop-native",
         .icon_path = "assets/icon.png",
-        .default_frame = geometry.RectF.init(0, 0, frame_w, frame_h),
+        .default_frame = geometry.RectF.init(0, 0, win_w, win_h),
         .restore_state = false,
         .js_window_api = false,
         .menus = &app_menus,
