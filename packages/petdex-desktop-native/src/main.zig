@@ -475,6 +475,9 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     });
     node.widget.image_fit = .stretch;
     node.widget.image_sampling = .nearest;
+    // The whole pet is a window-drag surface, the old desktop's
+    // behavior: grab boba anywhere and move him around the screen.
+    node.widget.window_drag = true;
     return node;
 }
 
