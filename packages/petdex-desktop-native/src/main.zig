@@ -172,6 +172,8 @@ pub const Model = struct {
     active_pet: u32 = 0,
     window_fitted: bool = false,
     bubbles_enabled: bool = true,
+    pet_x: f64 = 0,
+    pet_y: f64 = 0,
     dark: bool = true,
     high_contrast: bool = false,
     reduce_motion: bool = false,
@@ -845,7 +847,6 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .toggle_bubbles => {
             model.bubbles_enabled = !model.bubbles_enabled;
-            _ = fitWindow(model, fx);
             saveSettings(model);
         },
         .set_scale => |fraction| {
@@ -898,7 +899,10 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 if (moved) |result| {
                     if (result.hit_x) model.vx = 0;
                     if (result.hit_y) model.vy = 0;
+                    model.pet_x = result.x;
+                    model.pet_y = result.y;
                 }
+                syncBubbleWindow(model, fx);
                 if (model.vx >= physics_min_vel) {
                     setThrowState(model, .@"running-right", fx);
                 } else if (model.vx <= -physics_min_vel) {
@@ -915,6 +919,9 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 return;
             }
             const read = fx.moveWindow("main", 0, 0, false) orelse return;
+            model.pet_x = read.x;
+            model.pet_y = read.y;
+            syncBubbleWindow(model, fx);
             if (model.dragging) {
                 if (read.primary_down) {
                     // Follow the cursor keeping the grab offset, and
@@ -962,13 +969,10 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             }
             const pet_w = frame_w * model.scale;
             const pet_h = frame_h * model.scale;
-            // The window is fitted to the sprite; while a bubble
-            // shows, the sprite sits bottom-center under the band.
-            const window_w = if (bubbleActive(model)) @max(pet_w, @min(bubble_win_w, bubbleColW(model) + 80)) else pet_w;
-            const left = read.x + (window_w - pet_w) / 2.0;
-            const top = read.y + (if (bubbleActive(model)) bubbleBandH(model) else 0);
-            const inside = read.cursor_x >= left and read.cursor_x <= left + pet_w and
-                read.cursor_y >= top and read.cursor_y <= top + pet_h;
+            // The window is fitted to the sprite, so the pet rect IS
+            // the window rect.
+            const inside = read.cursor_x >= read.x and read.cursor_x <= read.x + pet_w and
+                read.cursor_y >= read.y and read.cursor_y <= read.y + pet_h;
             if (read.primary_down and !model.primary_was_down and inside) {
                 model.dragging = true;
                 model.grab_dx = read.cursor_x - read.x;
@@ -986,7 +990,6 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             if (!model.sheet_loaded) return;
             if (model.settings_open and thumbs_built < catalog_len) buildNextThumb(fx);
             if (hook_server.mailbox.takeBubble(&model.bubble)) {
-                _ = fitWindow(model, fx);
                 if (model.bubble.text_len > 0) {
                     loadAgentAvatar(model.bubble.agent[0..model.bubble.agent_len], model.dark, fx);
                     registerTail(model.dark, fx);
@@ -1040,18 +1043,17 @@ const pet_menu = [_]AppUi.ContextMenuItem{
     .{ .label = "Close Pet", .msg = .close_pet },
 };
 
-// Bubble geometry is fully derived: text is clipped to a hard char
-// budget, the char budget bounds the line count, and the line count
-// sets the card and window band heights. Nothing can overflow because
-// nothing exceeds its budget.
-const bubble_win_w: f32 = 330;
+// The bubble lives in its OWN fixed-size window: floating,
+// transparent, click-through. Nothing is estimated — the window is a
+// constant, the card inside is intrinsic, and the surplus space is
+// crossable by clicks, so a misfit costs nothing anywhere.
+const bubble_window_w: f32 = 340;
+const bubble_window_h: f32 = 150;
 const bubble_text_w: f32 = 250;
 const bubble_chars_per_line: usize = 26;
 const bubble_max_lines: usize = 2;
 const bubble_display_chars: usize = bubble_chars_per_line * bubble_max_lines;
-const bubble_line_h: f32 = 20;
 const bubble_card_pad: f32 = 12;
-const tail_gap: f32 = 4;
 
 /// Count display characters (UTF-8 sequences, not bytes).
 fn charCount(text: []const u8) usize {
@@ -1095,75 +1097,16 @@ fn clipDisplay(text: []const u8, max_chars: usize, scratch: []u8) []const u8 {
     return scratch[0 .. total + ell.len];
 }
 
-/// Greedy word-wrap simulation at an over-provisioned per-char width:
-/// the same packing the engine performs, so long unbreakable tokens
-/// ("mcp__firecrawl__search") count the extra line they really take.
-fn wrapLines(text: []const u8, width: f32, per_char: f32) f32 {
-    if (text.len == 0) return 0;
-    var lines: f32 = 1;
-    var line_w: f32 = 0;
-    var it = std.mem.tokenizeScalar(u8, text, ' ');
-    while (it.next()) |word| {
-        const w = @as(f32, @floatFromInt(charCount(word))) * per_char;
-        if (w > width) {
-            // Token longer than the line: it breaks mid-token across
-            // however many lines it needs, continuing on the last.
-            var remaining = w;
-            if (line_w > 0) lines += 1;
-            while (remaining > width) {
-                lines += 1;
-                remaining -= width;
-            }
-            line_w = remaining + per_char;
-            continue;
-        }
-        const space: f32 = if (line_w > 0) per_char else 0;
-        if (line_w + space + w > width) {
-            lines += 1;
-            line_w = w;
-        } else {
-            line_w += space + w;
-        }
-    }
-    return lines;
-}
-
-const bubble_title_per_char: f32 = 8.2;
-const bubble_text_per_char: f32 = 7.4;
-const bubble_line_h_exact: f32 = 21;
-
 /// Fluid text-column width: short one-liners get a snug card, anything
-/// longer takes the full column. Chars are display chars, the per-char
-/// width a generous sm-size average so the estimate over-provisions
-/// (the card itself is intrinsic — a misestimate costs pixels, never
-/// clipped text).
+/// longer takes the full column.
 fn bubbleColW(model: *const Model) f32 {
     const title_chars = @min(charCount(model.bubble.title[0..model.bubble.title_len]), bubble_display_chars);
     const text_chars = @min(charCount(model.bubble.text[0..model.bubble.text_len]), bubble_display_chars);
     const longest = @max(title_chars, text_chars);
     if (longest > bubble_chars_per_line) return bubble_text_w;
-    // Bold titles carry wider glyphs than the muted preview.
     const per_char: f32 = if (title_chars > 0) 8.2 else 7.4;
     const w = @as(f32, @floatFromInt(longest)) * per_char + 10.0;
     return @max(64.0, @min(bubble_text_w, w));
-}
-
-/// Exact content height from the wrap simulation (display-clipped
-/// text, so the inputs match what renders).
-fn bubbleContentH(model: *const Model) f32 {
-    const col = bubbleColW(model);
-    var tbuf: [280]u8 = undefined;
-    var xbuf: [280]u8 = undefined;
-    const title = clipDisplay(model.bubble.title[0..model.bubble.title_len], bubble_display_chars, &tbuf);
-    const text = clipDisplay(model.bubble.text[0..model.bubble.text_len], bubble_display_chars, &xbuf);
-    const title_lines = wrapLines(title, col, bubble_title_per_char);
-    const text_lines = @max(wrapLines(text, col, bubble_text_per_char), 1);
-    const gap: f32 = if (title_lines > 0) 2 else 0;
-    return @max(title_lines * bubble_line_h_exact + gap + text_lines * bubble_line_h_exact, 20);
-}
-
-fn bubbleBandH(model: *const Model) f32 {
-    return bubble_card_pad * 2 + bubbleContentH(model) + tail_h_f + tail_gap + 12;
 }
 const tail_h_f: f32 = 9;
 
@@ -1175,12 +1118,23 @@ fn bubbleActive(model: *const Model) bool {
 /// above it while a bubble is showing (kept at least bubble-wide so
 /// the text can wrap like the old 190px-capped tooltip).
 fn fitWindow(model: *const Model, fx: *Effects) bool {
+    return fx.resizeWindow("main", frame_w * model.scale, frame_h * model.scale, .bottom_center);
+}
+
+/// Keep the bubble window glued above the pet: read both origins and
+/// close the gap. Self-correcting, so drags, throws, and scale changes
+/// all need no special-casing.
+fn syncBubbleWindow(model: *const Model, fx: *Effects) void {
+    if (!bubbleActive(model)) return;
+    const cur = fx.moveWindow("bubble", 0, 0, false) orelse return;
     const pet_w = frame_w * model.scale;
-    const pet_h = frame_h * model.scale;
-    const bubble_w = bubbleColW(model) + 80;
-    const w = if (bubbleActive(model)) @max(pet_w, @min(bubble_win_w, bubble_w)) else pet_w;
-    const h = if (bubbleActive(model)) pet_h + bubbleBandH(model) else pet_h;
-    return fx.resizeWindow("main", w, h, .bottom_center);
+    const want_x = model.pet_x + pet_w / 2.0 - bubble_window_w / 2.0;
+    const want_y = model.pet_y - bubble_window_h + 10.0;
+    const dx = want_x - cur.x;
+    const dy = want_y - cur.y;
+    if (@abs(dx) > 0.5 or @abs(dy) > 0.5) {
+        _ = fx.moveWindow("bubble", dx, dy, false);
+    }
 }
 
 pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
@@ -1205,77 +1159,76 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     // fall-through resolves here and the context menu shows; the drag
     // never rides widget presses (cursor polling), so a claimed press
     // costs nothing.
-    if (bubbleActive(model)) {
-        const title_raw = model.bubble.title[0..model.bubble.title_len];
-        const text_raw = model.bubble.text[0..model.bubble.text_len];
-        const title_clipped = clipDisplay(title_raw, bubble_display_chars, &bubble_title_scratch);
-        const text_clipped = clipDisplay(text_raw, bubble_display_chars, &bubble_text_scratch);
-        var text_node = ui.text(.{
-            .size = .sm,
-            .wrap = true,
-            .width = bubbleColW(model),
-        }, text_clipped);
-        var avatar = ui.image(.{
-            .width = 20,
-            .height = 20,
-            .image = if (avatar_ready) avatar_image_id else 0,
-            .semantics = .{ .label = "Agent avatar" },
-        });
-        avatar.widget.image_fit = .contain;
-        const spinner_slot = if (model.bubble.busy)
-            ui.el(.spinner, .{ .width = 16, .height = 16, .semantics = .{ .label = "Working" } }, .{})
-        else
-            ui.el(.stack, .{ .width = 16, .height = 16 }, .{});
-        var card = if (title_clipped.len > 0) blk: {
-            var title_node = ui.paragraph(.{ .size = .sm, .width = bubbleColW(model) }, &.{.{
-                .text = title_clipped,
-                .weight = .bold,
-            }});
-            title_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
-            text_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(156, 158, 168) else canvas.Color.rgb8(88, 92, 106);
-            break :blk ui.el(.panel, .{
-                .padding = bubble_card_pad,
-                .style_tokens = .{ .radius = .md },
-            }, .{
-                ui.row(.{ .gap = 8, .cross = .center }, .{
-                    avatar,
-                    ui.column(.{ .gap = 2, .width = bubbleColW(model), .cross = .start }, .{ title_node, text_node }),
-                    spinner_slot,
-                }),
-            });
-        } else blk: {
-            text_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
-            break :blk ui.el(.panel, .{
-                .padding = bubble_card_pad,
-                .style_tokens = .{ .radius = .md },
-            }, .{
-                ui.row(.{ .gap = 8, .cross = .center }, .{
-                    avatar,
-                    ui.column(.{ .width = bubbleColW(model), .cross = .start }, .{text_node}),
-                    spinner_slot,
-                }),
-            });
-        };
-        if (model.dark) {
-            card.widget.style.background = canvas.Color.rgb8(25, 25, 28);
-            card.widget.style.border = canvas.Color.rgba8(255, 255, 255, 26);
-            card.widget.style.stroke_width = 1;
-        } else {
-            card.widget.style.background = canvas.Color.rgb8(255, 255, 255);
-        }
-        var tail = ui.image(.{
-            .width = tail_w,
-            .height = tail_h,
-            .image = if (tail_ready) tail_image_id else 0,
-        });
-        tail.widget.image_fit = .contain;
-        return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{
-            card,
-            tail,
-            node,
-        });
-    }
     return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{node});
+}
+
+// ----------------------------------------------------------- bubble window
+
+fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
+    const title_raw = model.bubble.title[0..model.bubble.title_len];
+    const text_raw = model.bubble.text[0..model.bubble.text_len];
+    const title_clipped = clipDisplay(title_raw, bubble_display_chars, &bubble_title_scratch);
+    const text_clipped = clipDisplay(text_raw, bubble_display_chars, &bubble_text_scratch);
+    var text_node = ui.text(.{
+        .size = .sm,
+        .wrap = true,
+        .width = bubbleColW(model),
+    }, text_clipped);
+    var avatar = ui.image(.{
+        .width = 20,
+        .height = 20,
+        .image = if (avatar_ready) avatar_image_id else 0,
+        .semantics = .{ .label = "Agent avatar" },
+    });
+    avatar.widget.image_fit = .contain;
+    const spinner_slot = if (model.bubble.busy)
+        ui.el(.spinner, .{ .width = 16, .height = 16, .semantics = .{ .label = "Working" } }, .{})
+    else
+        ui.el(.stack, .{ .width = 16, .height = 16 }, .{});
+    var card = if (title_clipped.len > 0) blk: {
+        var title_node = ui.paragraph(.{ .size = .sm, .width = bubbleColW(model) }, &.{.{
+            .text = title_clipped,
+            .weight = .bold,
+        }});
+        title_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
+        text_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(156, 158, 168) else canvas.Color.rgb8(88, 92, 106);
+        break :blk ui.el(.panel, .{
+            .padding = bubble_card_pad,
+            .style_tokens = .{ .radius = .md },
+        }, .{
+            ui.row(.{ .gap = 8, .cross = .center }, .{
+                avatar,
+                ui.column(.{ .gap = 2, .width = bubbleColW(model), .cross = .start }, .{ title_node, text_node }),
+                spinner_slot,
+            }),
+        });
+    } else blk: {
+        text_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
+        break :blk ui.el(.panel, .{
+            .padding = bubble_card_pad,
+            .style_tokens = .{ .radius = .md },
+        }, .{
+            ui.row(.{ .gap = 8, .cross = .center }, .{
+                avatar,
+                ui.column(.{ .width = bubbleColW(model), .cross = .start }, .{text_node}),
+                spinner_slot,
+            }),
+        });
+    };
+    if (model.dark) {
+        card.widget.style.background = canvas.Color.rgb8(25, 25, 28);
+        card.widget.style.border = canvas.Color.rgba8(255, 255, 255, 26);
+        card.widget.style.stroke_width = 1;
+    } else {
+        card.widget.style.background = canvas.Color.rgb8(255, 255, 255);
+    }
+    var tail = ui.image(.{
+        .width = tail_w,
+        .height = tail_h,
+        .image = if (tail_ready) tail_image_id else 0,
+    });
+    tail.widget.image_fit = .contain;
+    return ui.column(.{ .grow = 1, .main = .end, .cross = .center }, .{ card, tail });
 }
 
 // --------------------------------------------------------- settings window
@@ -1285,6 +1238,23 @@ const settings_canvas_label = "settings-canvas";
 
 fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []const PetdexApp.WindowDescriptor {
     var count: usize = 0;
+    if (bubbleActive(model)) {
+        scratch.windows[count] = .{
+            .label = "bubble",
+            .canvas_label = "bubble-canvas",
+            .title = "",
+            .width = bubble_window_w,
+            .height = bubble_window_h,
+            .x = @floatCast(model.pet_x + (frame_w * model.scale) / 2.0 - bubble_window_w / 2.0),
+            .y = @floatCast(model.pet_y - bubble_window_h + 10.0),
+            .resizable = false,
+            .titlebar = .chromeless,
+            .floating = true,
+            .transparent = true,
+            .click_through = true,
+        };
+        count += 1;
+    }
     if (model.settings_open) {
         scratch.windows[count] = .{
             .label = settings_window_label,
@@ -1301,6 +1271,7 @@ fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []cons
 }
 
 fn petdexWindowView(ui: *PetdexApp.Ui, model: *const Model, window_label: []const u8) PetdexApp.Ui.Node {
+    if (std.mem.eql(u8, window_label, "bubble")) return bubbleView(ui, model);
     std.debug.assert(std.mem.eql(u8, window_label, settings_window_label));
     return settingsView(ui, model);
 }
