@@ -516,6 +516,46 @@ fn loadSheetForPet(entry: *const CatalogEntry) bool {
 var initial_scale: f32 = 0.7;
 var initial_pet: u32 = 0;
 
+// ------------------------------------------------------------- avatars
+// One slot for the CURRENT bubble's agent avatar (claude-code, codex,
+// gemini, opencode, antigravity), 40x40 PNGs committed under
+// assets/agents/, re-registered only when the agent changes.
+const avatar_image_id: u64 = 13;
+var avatar_agent: [24]u8 = @splat(0);
+var avatar_agent_len: usize = 0;
+var avatar_ready: bool = false;
+
+fn loadAgentAvatar(agent: []const u8, fx: *Effects) void {
+    if (avatar_ready and std.mem.eql(u8, avatar_agent[0..avatar_agent_len], agent)) return;
+    var safe = true;
+    for (agent) |c| {
+        if (!((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-')) safe = false;
+    }
+    var path_buf: [128]u8 = undefined;
+    var probe: [1]u8 = undefined;
+    const name = if (safe and agent.len > 0) agent else "fallback";
+    var png_path = std.fmt.bufPrint(&path_buf, "assets/agents/{s}.png", .{name}) catch return;
+    if (cReadFile(png_path, &probe) == null) {
+        png_path = std.fmt.bufPrint(&path_buf, "assets/agents/fallback.png", .{}) catch return;
+    }
+    var tga_buf: [128]u8 = undefined;
+    var cmd_buf: [512]u8 = undefined;
+    const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-avatar-{s}.tga", .{name}) catch return;
+    if (cReadFile(tga_path, &probe) == null) {
+        const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}' --out '{s}' >/dev/null 2>&1", .{ png_path, tga_path }) catch return;
+        _ = system(cmd);
+        if (cReadFile(tga_path, &probe) == null) return;
+    }
+    var heap: [32 * 1024]u8 = undefined;
+    const bytes = cReadFile(tga_path, &heap) orelse return;
+    const parsed = parseTga(boot_allocator, bytes) catch return;
+    defer boot_allocator.free(parsed.pixels);
+    fx.registerImage(avatar_image_id, parsed.width, parsed.height, parsed.pixels) catch return;
+    @memcpy(avatar_agent[0..agent.len], agent);
+    avatar_agent_len = agent.len;
+    avatar_ready = true;
+}
+
 // ------------------------------------------------------------- thumbnails
 // One atlas texture for every catalog thumbnail: the image registry
 // caps at 16 slots, so 28+ per-pet images can never each own one. A
@@ -893,6 +933,9 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             if (model.settings_open and thumbs_built < catalog_len) buildNextThumb(fx);
             if (hook_server.mailbox.takeBubble(&model.bubble)) {
                 _ = fitWindow(model, fx);
+                if (model.bubble.text_len > 0) {
+                    loadAgentAvatar(model.bubble.agent[0..model.bubble.agent_len], fx);
+                }
             }
             const now = fx.wallMs();
             const dwell_over = now - model.shown_at_ms >= model.shown_dwell_ms;
@@ -984,21 +1027,30 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     // costs nothing.
     if (bubbleActive(model)) {
         // Speech bubble above the pet, the old tooltip's shape: a
-        // rounded card, wrapped text, centered on the sprite.
+        // WHITE rounded card in every theme, agent avatar beside
+        // wrapped shrink-to-fit text capped at the old 190px ceiling.
+        var text_node = ui.text(.{
+            .size = .sm,
+            .wrap = true,
+            .width = @min(170.0, @as(f32, @floatFromInt(model.bubble.text_len)) * 6.5 + 4.0),
+        }, model.bubble.text[0..model.bubble.text_len]);
+        text_node.widget.style.foreground = canvas.Color.rgb8(17, 17, 17);
+        var avatar = ui.image(.{
+            .width = 20,
+            .height = 20,
+            .image = if (avatar_ready) avatar_image_id else 0,
+            .semantics = .{ .label = "Agent avatar" },
+        });
+        avatar.widget.image_fit = .contain;
+        var card = ui.el(.panel, .{
+            .padding = 8,
+            .style_tokens = .{ .radius = .md },
+        }, .{
+            ui.row(.{ .gap = 6, .cross = .center }, .{ avatar, text_node }),
+        });
+        card.widget.style.background = canvas.Color.rgb8(255, 255, 255);
         return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .gap = 8, .on_press = .noop, .context_menu = &pet_menu }, .{
-            ui.el(.panel, .{
-                .padding = 8,
-                .style_tokens = .{ .background = .surface, .radius = .md },
-            }, .{
-                ui.text(.{
-                    .size = .sm,
-                    .wrap = true,
-                    // Shrink-to-fit like the old tooltip: wrap needs a
-                    // definite width, so estimate one from the content
-                    // and cap it at the old 190px ceiling.
-                    .width = @min(190.0, @as(f32, @floatFromInt(model.bubble.text_len)) * 6.5 + 4.0),
-                }, model.bubble.text[0..model.bubble.text_len]),
-            }),
+            card,
             node,
         });
     }
