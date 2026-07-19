@@ -760,7 +760,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .set_scale => |fraction| {
             model.scale = 0.4 + fraction * 0.8;
-            _ = fx.resizeWindow("main", frame_w * model.scale, frame_h * model.scale, .bottom_center);
+            _ = fitWindow(model, fx);
             saveSettings(model);
         },
         .open_pet_page => |index| {
@@ -788,7 +788,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 // The shell window boots at the slider's max extent;
                 // fit it to the drawn sprite so the whole window IS the
                 // pet — no invisible band above it eating clicks.
-                model.window_fitted = fx.resizeWindow("main", frame_w * model.scale, frame_h * model.scale, .bottom_center);
+                model.window_fitted = fitWindow(model, fx);
             }
             const now = fx.wallMs();
             if (model.throwing) {
@@ -868,10 +868,13 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             }
             const pet_w = frame_w * model.scale;
             const pet_h = frame_h * model.scale;
-            // The window is fitted to the sprite, so the pet rect IS
-            // the window rect.
-            const inside = read.cursor_x >= read.x and read.cursor_x <= read.x + pet_w and
-                read.cursor_y >= read.y and read.cursor_y <= read.y + pet_h;
+            // The window is fitted to the sprite; while a bubble
+            // shows, the sprite sits bottom-center under the band.
+            const window_w = if (bubbleActive(model)) @max(pet_w, bubble_min_w) else pet_w;
+            const left = read.x + (window_w - pet_w) / 2.0;
+            const top = read.y + (if (bubbleActive(model)) bubble_band_h else 0);
+            const inside = read.cursor_x >= left and read.cursor_x <= left + pet_w and
+                read.cursor_y >= top and read.cursor_y <= top + pet_h;
             if (read.primary_down and !model.primary_was_down and inside) {
                 model.dragging = true;
                 model.grab_dx = read.cursor_x - read.x;
@@ -888,7 +891,9 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             if (timer.outcome != .fired) return;
             if (!model.sheet_loaded) return;
             if (model.settings_open and thumbs_built < catalog_len) buildNextThumb(fx);
-            _ = hook_server.mailbox.takeBubble(&model.bubble);
+            if (hook_server.mailbox.takeBubble(&model.bubble)) {
+                _ = fitWindow(model, fx);
+            }
             const now = fx.wallMs();
             const dwell_over = now - model.shown_at_ms >= model.shown_dwell_ms;
             if (!dwell_over) return;
@@ -937,6 +942,24 @@ const pet_menu = [_]AppUi.ContextMenuItem{
     .{ .label = "Close Pet", .msg = .close_pet },
 };
 
+const bubble_band_h: f32 = 84;
+const bubble_min_w: f32 = 216;
+
+fn bubbleActive(model: *const Model) bool {
+    return model.bubble.text_len > 0;
+}
+
+/// The window tracks exactly what is drawn: the sprite, plus a band
+/// above it while a bubble is showing (kept at least bubble-wide so
+/// the text can wrap like the old 190px-capped tooltip).
+fn fitWindow(model: *const Model, fx: *Effects) bool {
+    const pet_w = frame_w * model.scale;
+    const pet_h = frame_h * model.scale;
+    const w = if (bubbleActive(model)) @max(pet_w, bubble_min_w) else pet_w;
+    const h = if (bubbleActive(model)) pet_h + bubble_band_h else pet_h;
+    return fx.resizeWindow("main", w, h, .bottom_center);
+}
+
 pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     if (!model.sheet_loaded) {
         return ui.panel(.{ .width = frame_w, .height = frame_h, .semantics = .{ .label = "No pet installed" } }, .{});
@@ -959,6 +982,26 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     // fall-through resolves here and the context menu shows; the drag
     // never rides widget presses (cursor polling), so a claimed press
     // costs nothing.
+    if (bubbleActive(model)) {
+        // Speech bubble above the pet, the old tooltip's shape: a
+        // rounded card, wrapped text, centered on the sprite.
+        return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .gap = 8, .on_press = .noop, .context_menu = &pet_menu }, .{
+            ui.el(.panel, .{
+                .padding = 8,
+                .style_tokens = .{ .background = .surface, .radius = .md },
+            }, .{
+                ui.text(.{
+                    .size = .sm,
+                    .wrap = true,
+                    // Shrink-to-fit like the old tooltip: wrap needs a
+                    // definite width, so estimate one from the content
+                    // and cap it at the old 190px ceiling.
+                    .width = @min(190.0, @as(f32, @floatFromInt(model.bubble.text_len)) * 6.5 + 4.0),
+                }, model.bubble.text[0..model.bubble.text_len]),
+            }),
+            node,
+        });
+    }
     return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{node});
 }
 
