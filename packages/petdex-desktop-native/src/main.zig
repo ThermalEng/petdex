@@ -1002,9 +1002,14 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
         });
     }
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
+    // The window is a fixed 640pt: everything but the pet list is
+    // constant chrome, so the list gets the exact remaining band and
+    // scrolls inside it instead of pushing the cards past the bottom.
+    const list_intrinsic: f32 = @as(f32, @floatFromInt(shown)) * 62.0 - 6.0;
+    const list_h: f32 = @min(344.0, list_intrinsic);
     return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
-        ui.scroll(.{ .grow = 1 }, .{ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown]))}),
+        ui.scroll(.{ .height = list_h }, .{ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown]))}),
         ui.text(.{ .size = .heading }, "Appearance"),
         ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
             ui.row(.{ .padding = 12, .cross = .center, .gap = 12 }, .{
