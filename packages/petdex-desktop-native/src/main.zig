@@ -521,6 +521,36 @@ var initial_pet: u32 = 0;
 // gemini, opencode, antigravity), 40x40 PNGs committed under
 // assets/agents/, re-registered only when the agent changes.
 const avatar_image_id: u64 = 13;
+const tail_image_id: u64 = 14;
+const tail_w: usize = 18;
+const tail_h: usize = 9;
+var tail_dark: bool = false;
+var tail_ready: bool = false;
+
+/// Register the speech-bubble tail: a filled triangle pointing down,
+/// generated in code and colored like the card for the active theme.
+fn registerTail(dark: bool, fx: *Effects) void {
+    if (tail_ready and tail_dark == dark) return;
+    var pixels: [tail_w * tail_h * 4]u8 = @splat(0);
+    const cr: u8 = if (dark) 25 else 255;
+    const cg: u8 = if (dark) 25 else 255;
+    const cb: u8 = if (dark) 28 else 255;
+    for (0..tail_h) |y| {
+        const inset = y;
+        for (0..tail_w) |x| {
+            if (x >= inset and x < tail_w - inset) {
+                const i = (y * tail_w + x) * 4;
+                pixels[i] = cr;
+                pixels[i + 1] = cg;
+                pixels[i + 2] = cb;
+                pixels[i + 3] = 255;
+            }
+        }
+    }
+    fx.registerImage(tail_image_id, tail_w, tail_h, &pixels) catch return;
+    tail_dark = dark;
+    tail_ready = true;
+}
 var avatar_agent: [24]u8 = @splat(0);
 var avatar_agent_len: usize = 0;
 var avatar_ready: bool = false;
@@ -811,6 +841,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .appearance => |a| {
             model.dark = a.color_scheme == .dark;
+            if (model.bubble.text_len > 0) registerTail(model.dark, fx);
             model.high_contrast = a.high_contrast;
             model.reduce_motion = a.reduce_motion;
         },
@@ -935,6 +966,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 _ = fitWindow(model, fx);
                 if (model.bubble.text_len > 0) {
                     loadAgentAvatar(model.bubble.agent[0..model.bubble.agent_len], fx);
+                    registerTail(model.dark, fx);
                 }
             }
             const now = fx.wallMs();
@@ -1029,12 +1061,18 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
         // Speech bubble above the pet, the old tooltip's shape: a
         // WHITE rounded card in every theme, agent avatar beside
         // wrapped shrink-to-fit text capped at the old 190px ceiling.
-        var text_node = ui.text(.{
+        // Short texts stay a single intrinsic line (exact shrink-to-
+        // fit); only long ones take a definite width and wrap, so the
+        // estimate can never truncate or prematurely wrap a short
+        // status like "Ran for 2m 30s".
+        var text_node = if (model.bubble.text_len <= 26) ui.text(.{
+            .size = .sm,
+        }, model.bubble.text[0..model.bubble.text_len]) else ui.text(.{
             .size = .sm,
             .wrap = true,
-            .width = @min(170.0, @as(f32, @floatFromInt(model.bubble.text_len)) * 6.5 + 4.0),
+            .width = 170,
         }, model.bubble.text[0..model.bubble.text_len]);
-        text_node.widget.style.foreground = canvas.Color.rgb8(17, 17, 17);
+        text_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
         var avatar = ui.image(.{
             .width = 20,
             .height = 20,
@@ -1043,14 +1081,29 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
         });
         avatar.widget.image_fit = .contain;
         var card = ui.el(.panel, .{
-            .padding = 8,
+            .padding = 6,
             .style_tokens = .{ .radius = .md },
         }, .{
             ui.row(.{ .gap = 6, .cross = .center }, .{ avatar, text_node }),
         });
-        card.widget.style.background = canvas.Color.rgb8(255, 255, 255);
-        return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .gap = 8, .on_press = .noop, .context_menu = &pet_menu }, .{
+        // Theme-aware like the settings: the site card surface with a
+        // subtle hairline in dark, plain white in light.
+        if (model.dark) {
+            card.widget.style.background = canvas.Color.rgb8(25, 25, 28);
+            card.widget.style.border = canvas.Color.rgba8(255, 255, 255, 26);
+            card.widget.style.stroke_width = 1;
+        } else {
+            card.widget.style.background = canvas.Color.rgb8(255, 255, 255);
+        }
+        var tail = ui.image(.{
+            .width = tail_w,
+            .height = tail_h,
+            .image = if (tail_ready) tail_image_id else 0,
+        });
+        tail.widget.image_fit = .contain;
+        return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{
             card,
+            tail,
             node,
         });
     }
