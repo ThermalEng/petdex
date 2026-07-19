@@ -1097,16 +1097,30 @@ fn clipDisplay(text: []const u8, max_chars: usize, scratch: []u8) []const u8 {
     return scratch[0 .. total + ell.len];
 }
 
-/// Fluid text-column width: short one-liners get a snug card, anything
-/// longer takes the full column.
-fn bubbleColW(model: *const Model) f32 {
-    const title_chars = @min(charCount(model.bubble.title[0..model.bubble.title_len]), bubble_display_chars);
-    const text_chars = @min(charCount(model.bubble.text[0..model.bubble.text_len]), bubble_display_chars);
-    const longest = @max(title_chars, text_chars);
-    if (longest > bubble_chars_per_line) return bubble_text_w;
-    const per_char: f32 = if (title_chars > 0) 8.2 else 7.4;
-    const w = @as(f32, @floatFromInt(longest)) * per_char + 10.0;
-    return @max(64.0, @min(bubble_text_w, w));
+/// Split into at most two explicit lines at a word boundary near the
+/// char budget. Each line renders as an HONEST single-line node, so
+/// measure equals paint by construction — no engine wrap involved,
+/// nothing to under-measure, nothing to clip.
+fn splitLines(text: []const u8, max_chars: usize) [2][]const u8 {
+    if (charCount(text) <= max_chars) return .{ text, "" };
+    var n: usize = 0;
+    var hard_cut: usize = text.len;
+    for (text, 0..) |b, i| {
+        if ((b & 0xC0) != 0x80) {
+            if (n == max_chars) {
+                hard_cut = i;
+                break;
+            }
+            n += 1;
+        }
+    }
+    var cut = hard_cut;
+    if (std.mem.lastIndexOfScalar(u8, text[0..hard_cut], ' ')) |sp| {
+        if (hard_cut - sp <= 14) cut = sp;
+    }
+    const first = std.mem.trim(u8, text[0..cut], " ");
+    const second = std.mem.trim(u8, text[cut..], " ");
+    return .{ first, second };
 }
 const tail_h_f: f32 = 9;
 
@@ -1169,13 +1183,31 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
     const text_raw = model.bubble.text[0..model.bubble.text_len];
     const title_clipped = clipDisplay(title_raw, bubble_display_chars, &bubble_title_scratch);
     const text_clipped = clipDisplay(text_raw, bubble_display_chars, &bubble_text_scratch);
-    // Paragraph, not text: the span machinery MEASURES wrapped height
-    // (a wrapped ui.text measures one line and paints two, floating
-    // the bottom-anchored card above its own painted pixels).
-    var text_node = ui.paragraph(.{
-        .size = .sm,
-        .width = bubbleColW(model),
-    }, &.{.{ .text = text_clipped }});
+    const title_lines = splitLines(title_clipped, bubble_chars_per_line);
+    const text_lines = splitLines(text_clipped, bubble_chars_per_line + 2);
+
+    const title_fg = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
+    const muted_fg = if (model.dark) canvas.Color.rgb8(156, 158, 168) else canvas.Color.rgb8(88, 92, 106);
+    const text_fg = if (title_clipped.len > 0) muted_fg else title_fg;
+
+    // Up to four honest single-line nodes; empty lines render nothing.
+    var rows: [4]AppUi.Node = undefined;
+    var row_count: usize = 0;
+    for (title_lines) |line| {
+        if (line.len == 0) continue;
+        var node2 = ui.paragraph(.{ .size = .sm }, &.{.{ .text = line, .weight = .bold }});
+        node2.widget.style.foreground = title_fg;
+        rows[row_count] = node2;
+        row_count += 1;
+    }
+    for (text_lines) |line| {
+        if (line.len == 0) continue;
+        var node2 = ui.text(.{ .size = .sm }, line);
+        node2.widget.style.foreground = text_fg;
+        rows[row_count] = node2;
+        row_count += 1;
+    }
+
     var avatar = ui.image(.{
         .width = 20,
         .height = 20,
@@ -1187,36 +1219,17 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
         ui.el(.spinner, .{ .width = 16, .height = 16, .semantics = .{ .label = "Working" } }, .{})
     else
         ui.el(.stack, .{ .width = 16, .height = 16 }, .{});
-    var card = if (title_clipped.len > 0) blk: {
-        var title_node = ui.paragraph(.{ .size = .sm, .width = bubbleColW(model) }, &.{.{
-            .text = title_clipped,
-            .weight = .bold,
-        }});
-        title_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
-        text_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(156, 158, 168) else canvas.Color.rgb8(88, 92, 106);
-        break :blk ui.el(.panel, .{
-            .padding = bubble_card_pad,
-            .style_tokens = .{ .radius = .md },
-        }, .{
-            ui.row(.{ .gap = 8, .cross = .center }, .{
-                avatar,
-                ui.column(.{ .gap = 2, .width = bubbleColW(model), .cross = .start }, .{ title_node, text_node }),
-                spinner_slot,
-            }),
-        });
-    } else blk: {
-        text_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
-        break :blk ui.el(.panel, .{
-            .padding = bubble_card_pad,
-            .style_tokens = .{ .radius = .md },
-        }, .{
-            ui.row(.{ .gap = 8, .cross = .center }, .{
-                avatar,
-                ui.column(.{ .width = bubbleColW(model), .cross = .start }, .{text_node}),
-                spinner_slot,
-            }),
-        });
-    };
+
+    var card = ui.el(.panel, .{
+        .padding = bubble_card_pad,
+        .style_tokens = .{ .radius = .md },
+    }, .{
+        ui.row(.{ .gap = 8, .cross = .center }, .{
+            avatar,
+            ui.column(.{ .gap = 2, .cross = .start }, @as([]const AppUi.Node, rows[0..row_count])),
+            spinner_slot,
+        }),
+    });
     if (model.dark) {
         card.widget.style.background = canvas.Color.rgb8(25, 25, 28);
         card.widget.style.border = canvas.Color.rgba8(255, 255, 255, 26);
