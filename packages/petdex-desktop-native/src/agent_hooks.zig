@@ -368,6 +368,64 @@ fn hasFeatureHooks(toml: []const u8) bool {
     return false;
 }
 
+// ------------------------------------------------------------ removal
+
+/// Disconnect a JSON-hook agent: filter our entries out of every
+/// event, leave everything else exactly as found.
+fn uninstallJsonHooks(allocator: std.mem.Allocator, path: []const u8) bool {
+    const existing = readFileAlloc(allocator, path, 1024 * 1024) orelse return true;
+    defer allocator.free(existing);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const root = std.json.parseFromSliceLeaky(std.json.Value, a, existing, .{}) catch return false;
+    if (root != .object) return false;
+    const hooks_val = root.object.get("hooks") orelse return true;
+    if (hooks_val != .object) return true;
+    var it = hooks_val.object.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.* != .array) continue;
+        const arr = &entry.value_ptr.array;
+        var i: usize = 0;
+        while (i < arr.items.len) {
+            if (entryIsPetdex(arr.items[i])) {
+                _ = arr.orderedRemove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+    const serialized = std.json.Stringify.valueAlloc(a, root, .{ .whitespace = .indent_2 }) catch return false;
+    return writeFile(path, serialized);
+}
+
+pub fn uninstall(allocator: std.mem.Allocator, home: []const u8, kind: AgentKind) bool {
+    var path_buf: [512]u8 = undefined;
+    var z: [512]u8 = undefined;
+    switch (kind) {
+        .claude_code => {
+            const path = std.fmt.bufPrint(&path_buf, "{s}/.claude/settings.json", .{home}) catch return false;
+            return uninstallJsonHooks(allocator, path);
+        },
+        .gemini => {
+            const path = std.fmt.bufPrint(&path_buf, "{s}/.gemini/settings.json", .{home}) catch return false;
+            return uninstallJsonHooks(allocator, path);
+        },
+        .codex => {
+            // hooks.json is wholly ours; the config.toml feature flag
+            // stays (harmless without the file).
+            const pz = std.fmt.bufPrintZ(&z, "{s}/.codex/hooks.json", .{home}) catch return false;
+            _ = std.c.unlink(pz);
+            return true;
+        },
+        .opencode => {
+            const pz = std.fmt.bufPrintZ(&z, "{s}/.config/opencode/plugins/petdex.js", .{home}) catch return false;
+            _ = std.c.unlink(pz);
+            return true;
+        },
+    }
+}
+
 // -------------------------------------------------------------- tests
 
 const t = std.testing;
