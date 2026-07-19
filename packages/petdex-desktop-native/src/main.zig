@@ -1169,11 +1169,13 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
     const text_raw = model.bubble.text[0..model.bubble.text_len];
     const title_clipped = clipDisplay(title_raw, bubble_display_chars, &bubble_title_scratch);
     const text_clipped = clipDisplay(text_raw, bubble_display_chars, &bubble_text_scratch);
-    var text_node = ui.text(.{
+    // Paragraph, not text: the span machinery MEASURES wrapped height
+    // (a wrapped ui.text measures one line and paints two, floating
+    // the bottom-anchored card above its own painted pixels).
+    var text_node = ui.paragraph(.{
         .size = .sm,
-        .wrap = true,
         .width = bubbleColW(model),
-    }, text_clipped);
+    }, &.{.{ .text = text_clipped }});
     var avatar = ui.image(.{
         .width = 20,
         .height = 20,
