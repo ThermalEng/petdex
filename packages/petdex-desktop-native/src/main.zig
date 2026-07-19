@@ -1044,13 +1044,13 @@ const pet_menu = [_]AppUi.ContextMenuItem{
 // budget, the char budget bounds the line count, and the line count
 // sets the card and window band heights. Nothing can overflow because
 // nothing exceeds its budget.
-const bubble_win_w: f32 = 280;
-const bubble_text_w: f32 = 200;
+const bubble_win_w: f32 = 330;
+const bubble_text_w: f32 = 250;
 const bubble_chars_per_line: usize = 26;
 const bubble_max_lines: usize = 2;
 const bubble_display_chars: usize = bubble_chars_per_line * bubble_max_lines;
 const bubble_line_h: f32 = 20;
-const bubble_card_pad: f32 = 10;
+const bubble_card_pad: f32 = 12;
 const tail_gap: f32 = 4;
 
 /// Count display characters (UTF-8 sequences, not bytes).
@@ -1095,12 +1095,42 @@ fn clipDisplay(text: []const u8, max_chars: usize, scratch: []u8) []const u8 {
     return scratch[0 .. total + ell.len];
 }
 
-fn lineCount(text: []const u8) f32 {
-    const chars = @min(charCount(text), bubble_display_chars);
-    if (chars == 0) return 0;
-    const lines = (chars + bubble_chars_per_line - 1) / bubble_chars_per_line;
-    return @floatFromInt(@min(lines, bubble_max_lines));
+/// Greedy word-wrap simulation at an over-provisioned per-char width:
+/// the same packing the engine performs, so long unbreakable tokens
+/// ("mcp__firecrawl__search") count the extra line they really take.
+fn wrapLines(text: []const u8, width: f32, per_char: f32) f32 {
+    if (text.len == 0) return 0;
+    var lines: f32 = 1;
+    var line_w: f32 = 0;
+    var it = std.mem.tokenizeScalar(u8, text, ' ');
+    while (it.next()) |word| {
+        const w = @as(f32, @floatFromInt(charCount(word))) * per_char;
+        if (w > width) {
+            // Token longer than the line: it breaks mid-token across
+            // however many lines it needs, continuing on the last.
+            var remaining = w;
+            if (line_w > 0) lines += 1;
+            while (remaining > width) {
+                lines += 1;
+                remaining -= width;
+            }
+            line_w = remaining + per_char;
+            continue;
+        }
+        const space: f32 = if (line_w > 0) per_char else 0;
+        if (line_w + space + w > width) {
+            lines += 1;
+            line_w = w;
+        } else {
+            line_w += space + w;
+        }
+    }
+    return lines;
 }
+
+const bubble_title_per_char: f32 = 8.2;
+const bubble_text_per_char: f32 = 7.4;
+const bubble_line_h_exact: f32 = 21;
 
 /// Fluid text-column width: short one-liners get a snug card, anything
 /// longer takes the full column. Chars are display chars, the per-char
@@ -1112,19 +1142,28 @@ fn bubbleColW(model: *const Model) f32 {
     const text_chars = @min(charCount(model.bubble.text[0..model.bubble.text_len]), bubble_display_chars);
     const longest = @max(title_chars, text_chars);
     if (longest > bubble_chars_per_line) return bubble_text_w;
-    const w = @as(f32, @floatFromInt(longest)) * 7.4 + 10.0;
+    // Bold titles carry wider glyphs than the muted preview.
+    const per_char: f32 = if (title_chars > 0) 8.2 else 7.4;
+    const w = @as(f32, @floatFromInt(longest)) * per_char + 10.0;
     return @max(64.0, @min(bubble_text_w, w));
 }
 
-/// Window band: an over-provisioned bound from the char math (the card
-/// is intrinsic and the surplus renders as invisible transparent
-/// space), plus slack for word-wrap waste the estimate cannot see.
-fn bubbleBandH(model: *const Model) f32 {
-    const title_lines = lineCount(model.bubble.title[0..model.bubble.title_len]);
-    const text_lines = @max(lineCount(model.bubble.text[0..model.bubble.text_len]), 1);
+/// Exact content height from the wrap simulation (display-clipped
+/// text, so the inputs match what renders).
+fn bubbleContentH(model: *const Model) f32 {
+    const col = bubbleColW(model);
+    var tbuf: [280]u8 = undefined;
+    var xbuf: [280]u8 = undefined;
+    const title = clipDisplay(model.bubble.title[0..model.bubble.title_len], bubble_display_chars, &tbuf);
+    const text = clipDisplay(model.bubble.text[0..model.bubble.text_len], bubble_display_chars, &xbuf);
+    const title_lines = wrapLines(title, col, bubble_title_per_char);
+    const text_lines = @max(wrapLines(text, col, bubble_text_per_char), 1);
     const gap: f32 = if (title_lines > 0) 2 else 0;
-    const content = title_lines * bubble_line_h + gap + text_lines * bubble_line_h;
-    return bubble_card_pad * 2 + @max(content, 20) + tail_h_f + tail_gap + 24;
+    return @max(title_lines * bubble_line_h_exact + gap + text_lines * bubble_line_h_exact, 20);
+}
+
+fn bubbleBandH(model: *const Model) f32 {
+    return bubble_card_pad * 2 + bubbleContentH(model) + tail_h_f + tail_gap + 12;
 }
 const tail_h_f: f32 = 9;
 
