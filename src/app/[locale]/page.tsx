@@ -180,7 +180,7 @@ export default async function Home({
           <HeroPetParade pets={heroPets} isZh={isZh} />
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted-3">
-            <SubmitCTA className="inline-flex items-center gap-1.5 transition hover:text-foreground">
+            <SubmitCTA className="btn-3d inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-border-base bg-surface/70 px-4 text-[13px] font-medium text-foreground backdrop-blur transition hover:border-brand-light/40 hover:bg-brand-tint hover:text-brand-deep">
               {t("submitCta")} →
             </SubmitCTA>
             {showWechatCommunity ? (
