@@ -603,6 +603,15 @@ fn registerTail(dark: bool, fx: *Effects) void {
                 pixels[i + 1] = cg;
                 pixels[i + 2] = cb;
                 pixels[i + 3] = 255;
+                // The card carries a hairline in dark mode: the tail's
+                // diagonal edges continue it so the join reads as one
+                // outlined shape (the top row stays plain - it tucks
+                // under the card).
+                if (dark and y > 0 and (x == inset or x == tail_w - inset - 1)) {
+                    pixels[i] = 48;
+                    pixels[i + 1] = 48;
+                    pixels[i + 2] = 53;
+                }
             }
         }
     }
@@ -1256,7 +1265,7 @@ fn syncBubbleWindow(model: *const Model, fx: *Effects) void {
     const cur = fx.moveWindow("bubble", 0, 0, false) orelse return;
     const pet_w = frame_w * model.scale;
     const want_x = model.pet_x + pet_w / 2.0 - bubble_window_w / 2.0;
-    const want_y = model.pet_y - bubble_window_h + 10.0;
+    const want_y = model.pet_y - bubble_window_h + 2.0;
     const dx = want_x - cur.x;
     const dy = want_y - cur.y;
     if (@abs(dx) > 0.5 or @abs(dy) > 0.5) {
@@ -1356,6 +1365,10 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
         .image = if (tail_ready) tail_image_id else 0,
     });
     tail.widget.image_fit = .contain;
+    // Pure translation (no rotation, so no canvas-origin surprises):
+    // the tail rides up over the card's bottom hairline, hiding the
+    // border segment behind it so bubble and arrow read as one shape.
+    tail.widget.transform = canvas.Affine.translate(0, -1.5);
     return ui.column(.{ .grow = 1, .main = .end, .cross = .center }, .{ card, tail });
 }
 
@@ -1374,7 +1387,7 @@ fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []cons
             .width = bubble_window_w,
             .height = bubble_window_h,
             .x = @floatCast(model.pet_x + (frame_w * model.scale) / 2.0 - bubble_window_w / 2.0),
-            .y = @floatCast(model.pet_y - bubble_window_h + 10.0),
+            .y = @floatCast(model.pet_y - bubble_window_h + 2.0),
             .resizable = false,
             .titlebar = .chromeless,
             .floating = true,
@@ -1548,7 +1561,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     // everything - full pet catalog included - flows inside it. No
     // more per-section band budgets.
     return ui.scroll(.{ .grow = 1 }, .{ui.column(.{ .padding = 16, .gap = 12 }, .{
-        ui.text(.{ .size = .heading }, "Pets"),
+        ui.text(.{ .size = .lg }, "Pets"),
         ui.el(.search_field, .{
             .height = 34,
             .text = filter,
@@ -1569,10 +1582,10 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
         else
             ui.el(.stack, .{}, .{}),
         ui.el(.stack, .{ .height = 10 }, .{}),
-        ui.text(.{ .size = .heading }, "Agents"),
+        ui.text(.{ .size = .lg }, "Agents"),
         agentsSection(ui, model),
         ui.el(.stack, .{ .height = 10 }, .{}),
-        ui.text(.{ .size = .heading }, "Appearance"),
+        ui.text(.{ .size = .lg }, "Appearance"),
         ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
             ui.row(.{ .padding = 12, .cross = .center, .gap = 12 }, .{
                 ui.column(.{ .grow = 1 }, .{
