@@ -17,9 +17,16 @@
  */
 
 import {
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
+  openSync,
+  readSync,
+  readdirSync,
   readFileSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -77,6 +84,89 @@ export function clipTitle(prompt: string): string {
   const flat = prompt.replace(/\s+/g, " ").trim();
   if (flat.length <= TITLE_MAX) return flat;
   return `${flat.slice(0, TITLE_MAX - 1)}…`;
+}
+
+const PREVIEW_MAX = 110;
+const TRANSCRIPT_TAIL_CAP = 64 * 1024;
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Flatten + clip a close-of-turn preview of what the agent wrote. */
+export function clipPreview(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= PREVIEW_MAX) return flat;
+  return `${flat.slice(0, PREVIEW_MAX - 1)}…`;
+}
+
+/**
+ * Last assistant message from a Claude Code transcript: bounded tail
+ * read (64KB), newest JSONL line of type "assistant" that carries a
+ * non-empty text part. Codex skips this entirely - its Stop payload
+ * ships last_assistant_message directly.
+ */
+export function lastAssistantText(transcriptPath: string): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(transcriptPath, "r");
+    const size = fstatSync(fd).size;
+    const want = Math.min(size, TRANSCRIPT_TAIL_CAP);
+    const buf = Buffer.alloc(want);
+    readSync(fd, buf, 0, want, size - want);
+    const lines = buf.toString("utf8").split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]?.trim();
+      if (!line) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue; // first line of the tail window may be partial
+      }
+      if (
+        parsed == null ||
+        typeof parsed !== "object" ||
+        (parsed as Record<string, unknown>).type !== "assistant"
+      )
+        continue;
+      const message = (parsed as Record<string, unknown>).message;
+      if (message == null || typeof message !== "object") continue;
+      const content = (message as Record<string, unknown>).content;
+      if (!Array.isArray(content)) continue;
+      const text = content
+        .filter(
+          (c): c is { type: string; text: string } =>
+            c != null &&
+            typeof c === "object" &&
+            (c as Record<string, unknown>).type === "text" &&
+            typeof (c as Record<string, unknown>).text === "string",
+        )
+        .map((c) => c.text)
+        .join(" ")
+        .trim();
+      if (text) return text;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  }
+}
+
+/** Prune session-title files older than the TTL. Best-effort. */
+export function pruneSessions(dir: string, now = Date.now()): void {
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".json")) continue;
+      const full = join(dir, name);
+      try {
+        if (now - statSync(full).mtimeMs > SESSION_TTL_MS) unlinkSync(full);
+      } catch {}
+    }
+  } catch {}
 }
 
 /** session_id must stay filename-safe: agent payloads are untrusted. */
@@ -149,6 +239,8 @@ function parseStdin(text: string): {
       agentSource: null,
       sessionId: null,
       prompt: null,
+      transcriptPath: null,
+      lastAssistantMessage: null,
     };
   }
   try {
@@ -160,7 +252,23 @@ function parseStdin(text: string): {
       typeof parsed.agent_source === "string" ? parsed.agent_source : null;
     const sessionId = safeSessionId(parsed.session_id);
     const prompt = typeof parsed.prompt === "string" ? parsed.prompt : null;
-    return { toolName, toolInput, agentSource, sessionId, prompt };
+    const transcriptPath =
+      typeof parsed.transcript_path === "string"
+        ? parsed.transcript_path
+        : null;
+    const lastAssistantMessage =
+      typeof parsed.last_assistant_message === "string"
+        ? parsed.last_assistant_message
+        : null;
+    return {
+      toolName,
+      toolInput,
+      agentSource,
+      sessionId,
+      prompt,
+      transcriptPath,
+      lastAssistantMessage,
+    };
   } catch {
     return {
       toolName: null,
@@ -168,6 +276,8 @@ function parseStdin(text: string): {
       agentSource: null,
       sessionId: null,
       prompt: null,
+      transcriptPath: null,
+      lastAssistantMessage: null,
     };
   }
 }
@@ -261,8 +371,14 @@ export async function runBubble(args: string[]): Promise<void> {
   if (!event) return;
 
   const phase = args[0];
-  const { toolName, agentSource: stdinSource, sessionId, prompt } =
-    parseStdin(stdin);
+  const {
+    toolName,
+    agentSource: stdinSource,
+    sessionId,
+    prompt,
+    transcriptPath,
+    lastAssistantMessage,
+  } = parseStdin(stdin);
   const agentSource = stdinSource ?? argSource;
   if (
     sessionId &&
@@ -272,7 +388,17 @@ export async function runBubble(args: string[]): Promise<void> {
     rememberSessionTitle(SESSIONS_DIR, sessionId, prompt);
   }
   const title = sessionId ? sessionTitle(SESSIONS_DIR, sessionId) : null;
-  const text = formatBubble(event);
+  let text = formatBubble(event);
+  if (phase === "stop" || phase === "session-end") {
+    // Close-of-turn preview: what the agent actually wrote beats a
+    // generic "Done.". Codex ships it in the payload; Claude Code
+    // needs a bounded transcript tail.
+    const written =
+      lastAssistantMessage ??
+      (transcriptPath ? lastAssistantText(transcriptPath) : null);
+    if (written) text = clipPreview(written);
+    pruneSessions(SESSIONS_DIR);
+  }
   const state = stateForEvent(args, toolName);
 
   const token = readToken();
@@ -283,15 +409,17 @@ export async function runBubble(args: string[]): Promise<void> {
   // bubble latency to dominate state latency or vice versa.
   const tasks: Promise<unknown>[] = [];
   if (text) {
-    tasks.push(
-      postJson(
-        SIDECAR_BUBBLE_URL,
-        title
-          ? { text, title, agent_source: agentSource }
-          : { text, agent_source: agentSource },
-        token,
-      ),
-    );
+    // busy: the turn is still running (prompt submitted, tools firing).
+    // stop and waiting events settle it - the app renders a spinner
+    // beside the text while busy.
+    const busy =
+      phase === "user-prompt" ||
+      phase === "session-start" ||
+      phase === "pre" ||
+      phase === "post";
+    const body: Record<string, unknown> = { text, busy, agent_source: agentSource };
+    if (title) body.title = title;
+    tasks.push(postJson(SIDECAR_BUBBLE_URL, body, token));
   }
   if (state) {
     tasks.push(

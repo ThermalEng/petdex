@@ -36,6 +36,7 @@ pub const Bubble = struct {
     title_len: usize = 0,
     agent: [24]u8 = @splat(0),
     agent_len: usize = 0,
+    busy: bool = false,
     counter: u64 = 0,
 };
 
@@ -92,7 +93,7 @@ pub const Mailbox = struct {
         return head;
     }
 
-    pub fn setBubble(self: *Mailbox, text: []const u8, agent: []const u8, title: []const u8) u64 {
+    pub fn setBubble(self: *Mailbox, text: []const u8, agent: []const u8, title: []const u8, busy: bool) u64 {
         self.mutex.lock();
         defer self.mutex.unlock();
         const n = @min(text.len, self.bubble.text.len);
@@ -104,6 +105,7 @@ pub const Mailbox = struct {
         const tn = @min(title.len, self.bubble.title.len);
         @memcpy(self.bubble.title[0..tn], title[0..tn]);
         self.bubble.title_len = tn;
+        self.bubble.busy = busy;
         self.bubble.counter += 1;
         self.bubble_dirty = true;
         return self.bubble.counter;
@@ -339,7 +341,8 @@ fn route(server: *Server, conn: std.c.fd_t, method: []const u8, path: []const u8
         const capped = text[0..@min(text.len, 200)];
         const agent = jsonString(body, "agent_source") orelse "";
         const title = jsonString(body, "title") orelse "";
-        const counter = mailbox.setBubble(capped, agent[0..@min(agent.len, 24)], title[0..@min(title.len, 96)]);
+        const busy = std.mem.indexOf(u8, body, "\"busy\":true") != null;
+        const counter = mailbox.setBubble(capped, agent[0..@min(agent.len, 24)], title[0..@min(title.len, 96)], busy);
         mirrorBubble(server, capped, counter) catch {};
         const out = std.fmt.bufPrint(&scratch, "{{\"ok\":true,\"counter\":{d}}}", .{counter}) catch return;
         return respond(conn, 200, out);

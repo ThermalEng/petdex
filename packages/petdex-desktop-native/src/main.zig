@@ -1123,13 +1123,24 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
                 ui.row(.{ .gap = 8, .cross = .center }, .{
                     avatar,
                     ui.column(.{ .gap = 2, .width = 158, .cross = .start }, .{ title_node, text_node }),
+                    if (model.bubble.busy)
+                        ui.el(.spinner, .{ .semantics = .{ .label = "Working" } }, .{})
+                    else
+                        ui.el(.stack, .{}, .{}),
                 }),
             });
         } else ui.el(.panel, .{
             .padding = 6,
             .style_tokens = .{ .radius = .md },
         }, .{
-            ui.row(.{ .gap = 6, .cross = .center }, .{ avatar, text_node }),
+            ui.row(.{ .gap = 6, .cross = .center }, .{
+                avatar,
+                text_node,
+                if (model.bubble.busy)
+                    ui.el(.spinner, .{ .semantics = .{ .label = "Working" } }, .{})
+                else
+                    ui.el(.stack, .{}, .{}),
+            }),
         });
         // Theme-aware like the settings: the site card surface with a
         // subtle hairline in dark, plain white in light.
