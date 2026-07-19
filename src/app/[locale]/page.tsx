@@ -140,13 +140,14 @@ export default async function Home({
       <JsonLd data={jsonLd} />
       <SurprisePetCard initialPet={surprisePet} />
       <SiteHeader />
-      <section className="petdex-cloud relative -mt-[84px] overflow-clip pt-[84px]">
+      <section className="petdex-hero relative -mt-[84px] overflow-clip pt-[84px]">
         <div className="relative mx-auto flex w-full max-w-[1440px] flex-col px-5 pb-10 md:px-8">
           <div className="mt-12 flex flex-col items-center text-center md:mt-16">
-            <p className="font-mono text-xs tracking-[0.22em] text-brand uppercase">
+            <p className="inline-flex items-center gap-2 rounded-full border border-border-base bg-surface/60 px-3.5 py-1.5 font-mono text-[11px] tracking-[0.18em] text-brand uppercase backdrop-blur">
+              <span className="size-1.5 animate-pulse rounded-full bg-brand" />
               {t("eyebrow")}
             </p>
-            <h1 className="mt-3 text-[48px] leading-[0.98] font-semibold tracking-tight md:text-[80px]">
+            <h1 className="mt-5 text-[56px] leading-[0.95] font-semibold tracking-[-0.03em] md:text-[96px]">
               {t("title")}
             </h1>
             {locale === "zh" && (
@@ -168,7 +169,7 @@ export default async function Home({
               <DownloadDesktopCTA
                 href={`/${locale}/download`}
                 source="hero_primary"
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-inverse px-5 text-sm font-medium text-on-inverse transition hover:bg-inverse-hover"
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-brand-deep px-5 text-sm font-medium text-white shadow-[0_8px_24px_-8px_rgb(56_71_245/0.55)] transition hover:bg-brand"
               >
                 {t("downloadCta")}
                 <ArrowRight className="size-4" />
@@ -178,14 +179,14 @@ export default async function Home({
 
           <HeroPetParade pets={heroPets} isZh={isZh} />
 
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-            <SubmitCTA className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-inverse px-6 text-sm font-medium text-on-inverse transition hover:bg-inverse-hover">
-              {t("submitCta")}
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted-3">
+            <SubmitCTA className="inline-flex items-center gap-1.5 transition hover:text-foreground">
+              {t("submitCta")} →
             </SubmitCTA>
             {showWechatCommunity ? (
               <WechatCommunityDialog
                 source="hero_secondary"
-                className="h-12 bg-[#07C160]/10 px-6 text-[#07C160] hover:bg-[#07C160]/16"
+                className="inline-flex items-center gap-1.5 transition hover:text-foreground"
               >
                 {t("joinWeChat")}
               </WechatCommunityDialog>
@@ -193,7 +194,7 @@ export default async function Home({
               <DiscordLink
                 href={process.env.NEXT_PUBLIC_DISCORD_INVITE_URL}
                 source="hero_secondary"
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-[#5865F2]/25 bg-[#5865F2]/10 px-6 text-sm font-medium text-[#5865F2] backdrop-blur transition hover:bg-[#5865F2]/16"
+                className="inline-flex items-center gap-1.5 transition hover:text-foreground"
               >
                 <DiscordIcon className="size-4" />
                 {t("joinDiscord")}
@@ -201,7 +202,7 @@ export default async function Home({
             ) : (
               <Link
                 href="#gallery"
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-border-base bg-surface/70 px-6 text-sm font-medium text-foreground backdrop-blur transition hover:bg-surface"
+                className="inline-flex items-center gap-1.5 transition hover:text-foreground"
               >
                 {t("browseGallery")}
               </Link>

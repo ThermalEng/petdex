@@ -291,6 +291,47 @@ input {
   font: inherit;
 }
 
+/* Landing hero, continuous with the page: no gradient slab, just one
+   restrained brand glow bleeding from the top plus a faint dot grid
+   that fades out. The section never changes the page background, so
+   the hero-to-content transition disappears. */
+.petdex-hero {
+  background: radial-gradient(
+    ellipse 70% 45% at 50% -8%,
+    rgb(82 102 234 / 0.14),
+    transparent 70%
+  );
+}
+.petdex-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(
+    rgb(82 102 234 / 0.22) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+  mask-image: radial-gradient(
+    ellipse 60% 50% at 50% 0%,
+    black,
+    transparent 78%
+  );
+  pointer-events: none;
+}
+.dark .petdex-hero {
+  background: radial-gradient(
+    ellipse 70% 45% at 50% -8%,
+    rgb(101 120 255 / 0.16),
+    transparent 70%
+  );
+}
+.dark .petdex-hero::before {
+  background-image: radial-gradient(
+    rgb(137 163 255 / 0.16) 1px,
+    transparent 1px
+  );
+}
+
 .petdex-cloud {
   background:
     radial-gradient(
