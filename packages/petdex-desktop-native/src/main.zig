@@ -131,6 +131,7 @@ pub const Msg = union(enum) {
     install_agent: u32,
     uninstall_agent: u32,
     pet_filter: canvas.TextInputEvent,
+    toggle_pets_expanded,
     noop,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
@@ -188,6 +189,7 @@ pub const Model = struct {
     codex_trust_note: bool = false,
     pet_filter: [48]u8 = @splat(0),
     pet_filter_len: usize = 0,
+    pets_expanded: bool = false,
     dark: bool = true,
     high_contrast: bool = false,
     reduce_motion: bool = false,
@@ -880,6 +882,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .cycle_state => {
             applyState(model, model.state.next(), 0, fx);
         },
+        .toggle_pets_expanded => model.pets_expanded = !model.pets_expanded,
         .pet_filter => |edit| {
             switch (edit) {
                 .insert_text => |txt| {
@@ -1471,8 +1474,8 @@ fn agentsSection(ui: *AppUi, model: *const Model) AppUi.Node {
 
 var more_label_buf: [48]u8 = undefined;
 
-fn moreLabel(hidden: usize) []const u8 {
-    return std.fmt.bufPrint(&more_label_buf, "{d} more - type to filter", .{hidden}) catch "type to filter";
+fn moreLabel(total: usize) []const u8 {
+    return std.fmt.bufPrint(&more_label_buf, "Show all ({d})", .{total}) catch "Show all";
 }
 
 fn petMatchesFilter(name: []const u8, filter: []const u8) bool {
@@ -1496,7 +1499,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     var rows: [max_catalog]AppUi.Node = undefined;
     var shown: usize = 0;
     var matches: usize = 0;
-    const max_visible: usize = 6;
+    const max_visible: usize = if (model.pets_expanded) max_catalog else 6;
     const filter = model.pet_filter[0..model.pet_filter_len];
     for (catalog[0..@min(catalog_len, max_catalog)], 0..) |*entry, i| {
         if (!petMatchesFilter(entry.slice(), filter)) continue;
@@ -1553,18 +1556,22 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
             .placeholder = "Search pets",
             .semantics = .{ .label = "Search pets" },
         }, .{}),
-        // Search-first catalog: at most six rows render, the counter
-        // says what the filter is hiding. No nested scroll, so the
-        // page's extent is exact and the padding honest.
+        // Search-first catalog: six rows collapsed, the whole catalog
+        // expanded - the page itself scrolls, so no nested scroll and
+        // the extent stays exact.
         ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown])),
         if (matches > shown)
-            ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, moreLabel(matches - shown))
+            ui.button(.{ .size = .sm, .variant = .secondary, .on_press = .toggle_pets_expanded }, moreLabel(matches))
+        else if (model.pets_expanded and matches > 6)
+            ui.button(.{ .size = .sm, .variant = .secondary, .on_press = .toggle_pets_expanded }, "Show less")
         else if (matches == 0)
             ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "No pets match your search")
         else
             ui.el(.stack, .{}, .{}),
+        ui.el(.stack, .{ .height = 10 }, .{}),
         ui.text(.{ .size = .heading }, "Agents"),
         agentsSection(ui, model),
+        ui.el(.stack, .{ .height = 10 }, .{}),
         ui.text(.{ .size = .heading }, "Appearance"),
         ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
             ui.row(.{ .padding = 12, .cross = .center, .gap = 12 }, .{
