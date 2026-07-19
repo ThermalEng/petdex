@@ -965,7 +965,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             // shows, the sprite sits bottom-center under the band.
             const window_w = if (bubbleActive(model)) @max(pet_w, bubble_min_w) else pet_w;
             const left = read.x + (window_w - pet_w) / 2.0;
-            const top = read.y + (if (bubbleActive(model)) bubble_band_h else 0);
+            const top = read.y + (if (bubbleActive(model)) bubbleBandH(model) else 0);
             const inside = read.cursor_x >= left and read.cursor_x <= left + pet_w and
                 read.cursor_y >= top and read.cursor_y <= top + pet_h;
             if (read.primary_down and !model.primary_was_down and inside) {
@@ -1040,6 +1040,11 @@ const pet_menu = [_]AppUi.ContextMenuItem{
 };
 
 const bubble_band_h: f32 = 84;
+const bubble_band_titled_h: f32 = 108;
+
+fn bubbleBandH(model: *const Model) f32 {
+    return if (model.bubble.title_len > 0) bubble_band_titled_h else bubble_band_h;
+}
 const bubble_min_w: f32 = 216;
 
 fn bubbleActive(model: *const Model) bool {
@@ -1053,7 +1058,7 @@ fn fitWindow(model: *const Model, fx: *Effects) bool {
     const pet_w = frame_w * model.scale;
     const pet_h = frame_h * model.scale;
     const w = if (bubbleActive(model)) @max(pet_w, bubble_min_w) else pet_w;
-    const h = if (bubbleActive(model)) pet_h + bubble_band_h else pet_h;
+    const h = if (bubbleActive(model)) pet_h + bubbleBandH(model) else pet_h;
     return fx.resizeWindow("main", w, h, .bottom_center);
 }
 
@@ -1102,7 +1107,25 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
             .semantics = .{ .label = "Agent avatar" },
         });
         avatar.widget.image_fit = .contain;
-        var card = ui.el(.panel, .{
+        var card = if (model.bubble.title_len > 0) blk: {
+            // Two-line Codex look: bold session title over the muted
+            // activity preview, avatar beside both.
+            var title_node = ui.paragraph(.{ .size = .sm, .width = 158 }, &.{.{
+                .text = model.bubble.title[0..model.bubble.title_len],
+                .weight = .bold,
+            }});
+            title_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
+            text_node.widget.style.foreground = if (model.dark) canvas.Color.rgb8(156, 158, 168) else canvas.Color.rgb8(88, 92, 106);
+            break :blk ui.el(.panel, .{
+                .padding = 8,
+                .style_tokens = .{ .radius = .md },
+            }, .{
+                ui.row(.{ .gap = 8, .cross = .center }, .{
+                    avatar,
+                    ui.column(.{ .gap = 2, .width = 158, .cross = .start }, .{ title_node, text_node }),
+                }),
+            });
+        } else ui.el(.panel, .{
             .padding = 6,
             .style_tokens = .{ .radius = .md },
         }, .{

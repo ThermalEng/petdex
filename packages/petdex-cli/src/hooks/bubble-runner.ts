@@ -16,7 +16,12 @@
  *   stop                                  — session.end bubble
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +34,56 @@ const SIDECAR_BASE = "http://127.0.0.1:7777";
 const SIDECAR_BUBBLE_URL = `${SIDECAR_BASE}/bubble`;
 const SIDECAR_STATE_URL = `${SIDECAR_BASE}/state`;
 const STDIN_CAP = 64 * 1024;
+const SESSIONS_DIR = join(RUNTIME_DIR, "sessions");
+const TITLE_MAX = 60;
+
+/**
+ * Session titles: UserPromptSubmit carries the user's prompt, so we
+ * clip it and persist it per session_id; every later hook event in the
+ * same session attaches it as the bubble's title. Plain files instead
+ * of a daemon: hooks are independent short-lived processes.
+ */
+export function rememberSessionTitle(
+  dir: string,
+  sessionId: string,
+  prompt: string,
+): void {
+  try {
+    const title = clipTitle(prompt);
+    if (!title) return;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${sessionId}.json`),
+      JSON.stringify({ title, at: Date.now() }),
+    );
+  } catch {
+    // Hot path: a failed title write must never stain the agent.
+  }
+}
+
+export function sessionTitle(dir: string, sessionId: string): string | null {
+  try {
+    const raw = readFileSync(join(dir, `${sessionId}.json`), "utf8");
+    const parsed = JSON.parse(raw) as { title?: unknown };
+    return typeof parsed.title === "string" && parsed.title.length > 0
+      ? parsed.title
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clipTitle(prompt: string): string {
+  const flat = prompt.replace(/\s+/g, " ").trim();
+  if (flat.length <= TITLE_MAX) return flat;
+  return `${flat.slice(0, TITLE_MAX - 1)}…`;
+}
+
+/** session_id must stay filename-safe: agent payloads are untrusted. */
+function safeSessionId(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  return /^[a-zA-Z0-9_-]{1,64}$/.test(raw) ? raw : null;
+}
 
 /**
  * Map a hook phase + tool to the sprite state we want.
@@ -84,9 +139,17 @@ function parseStdin(text: string): {
   toolName: string | null;
   toolInput: unknown;
   agentSource: string | null;
+  sessionId: string | null;
+  prompt: string | null;
 } {
   if (!text.trim()) {
-    return { toolName: null, toolInput: undefined, agentSource: null };
+    return {
+      toolName: null,
+      toolInput: undefined,
+      agentSource: null,
+      sessionId: null,
+      prompt: null,
+    };
   }
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>;
@@ -95,9 +158,17 @@ function parseStdin(text: string): {
     const toolInput = parsed.tool_input;
     const agentSource =
       typeof parsed.agent_source === "string" ? parsed.agent_source : null;
-    return { toolName, toolInput, agentSource };
+    const sessionId = safeSessionId(parsed.session_id);
+    const prompt = typeof parsed.prompt === "string" ? parsed.prompt : null;
+    return { toolName, toolInput, agentSource, sessionId, prompt };
   } catch {
-    return { toolName: null, toolInput: undefined, agentSource: null };
+    return {
+      toolName: null,
+      toolInput: undefined,
+      agentSource: null,
+      sessionId: null,
+      prompt: null,
+    };
   }
 }
 
@@ -189,8 +260,18 @@ export async function runBubble(args: string[]): Promise<void> {
   const event = eventFromArgs(args, stdin);
   if (!event) return;
 
-  const { toolName, agentSource: stdinSource } = parseStdin(stdin);
+  const phase = args[0];
+  const { toolName, agentSource: stdinSource, sessionId, prompt } =
+    parseStdin(stdin);
   const agentSource = stdinSource ?? argSource;
+  if (
+    sessionId &&
+    prompt &&
+    (phase === "user-prompt" || phase === "session-start")
+  ) {
+    rememberSessionTitle(SESSIONS_DIR, sessionId, prompt);
+  }
+  const title = sessionId ? sessionTitle(SESSIONS_DIR, sessionId) : null;
   const text = formatBubble(event);
   const state = stateForEvent(args, toolName);
 
@@ -203,7 +284,13 @@ export async function runBubble(args: string[]): Promise<void> {
   const tasks: Promise<unknown>[] = [];
   if (text) {
     tasks.push(
-      postJson(SIDECAR_BUBBLE_URL, { text, agent_source: agentSource }, token),
+      postJson(
+        SIDECAR_BUBBLE_URL,
+        title
+          ? { text, title, agent_source: agentSource }
+          : { text, agent_source: agentSource },
+        token,
+      ),
     );
   }
   if (state) {

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { eventFromArgs, stateForEvent } from "./bubble-runner";
+import {
+  eventFromArgs, stateForEvent,
+  clipTitle,
+  rememberSessionTitle,
+  sessionTitle,
+} from "./bubble-runner";
 
 describe("eventFromArgs - session-level", () => {
   test("stop returns session.end", () => {
@@ -128,5 +133,26 @@ describe("stateForEvent", () => {
 
   test("unknown phase returns null", () => {
     expect(stateForEvent(["bogus"], null)).toBeNull();
+  });
+});
+
+
+describe("session titles", () => {
+  test("remember then read round-trips a clipped title", () => {
+    const dir = `${process.env.TMPDIR ?? "/tmp"}/petdex-title-test-${Date.now()}`;
+    rememberSessionTitle(dir, "abc-123", "  arregla   el login\n con oauth  ");
+    expect(sessionTitle(dir, "abc-123")).toBe("arregla el login con oauth");
+  });
+
+  test("missing session reads null", () => {
+    const dir = `${process.env.TMPDIR ?? "/tmp"}/petdex-title-test-miss-${Date.now()}`;
+    expect(sessionTitle(dir, "nope")).toBeNull();
+  });
+
+  test("clipTitle caps at 60 with ellipsis", () => {
+    const long = "a".repeat(80);
+    const clipped = clipTitle(long);
+    expect(clipped.length).toBe(60);
+    expect(clipped.endsWith("…")).toBe(true);
   });
 });

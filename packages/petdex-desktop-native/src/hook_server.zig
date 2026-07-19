@@ -32,6 +32,8 @@ pub const StateEvent = struct {
 pub const Bubble = struct {
     text: [200]u8 = @splat(0),
     text_len: usize = 0,
+    title: [96]u8 = @splat(0),
+    title_len: usize = 0,
     agent: [24]u8 = @splat(0),
     agent_len: usize = 0,
     counter: u64 = 0,
@@ -90,7 +92,7 @@ pub const Mailbox = struct {
         return head;
     }
 
-    pub fn setBubble(self: *Mailbox, text: []const u8, agent: []const u8) u64 {
+    pub fn setBubble(self: *Mailbox, text: []const u8, agent: []const u8, title: []const u8) u64 {
         self.mutex.lock();
         defer self.mutex.unlock();
         const n = @min(text.len, self.bubble.text.len);
@@ -99,6 +101,9 @@ pub const Mailbox = struct {
         const an = @min(agent.len, self.bubble.agent.len);
         @memcpy(self.bubble.agent[0..an], agent[0..an]);
         self.bubble.agent_len = an;
+        const tn = @min(title.len, self.bubble.title.len);
+        @memcpy(self.bubble.title[0..tn], title[0..tn]);
+        self.bubble.title_len = tn;
         self.bubble.counter += 1;
         self.bubble_dirty = true;
         return self.bubble.counter;
@@ -333,7 +338,8 @@ fn route(server: *Server, conn: std.c.fd_t, method: []const u8, path: []const u8
             return respond(conn, 400, "{\"ok\":false,\"error\":\"missing_text\"}");
         const capped = text[0..@min(text.len, 200)];
         const agent = jsonString(body, "agent_source") orelse "";
-        const counter = mailbox.setBubble(capped, agent[0..@min(agent.len, 24)]);
+        const title = jsonString(body, "title") orelse "";
+        const counter = mailbox.setBubble(capped, agent[0..@min(agent.len, 24)], title[0..@min(title.len, 96)]);
         mirrorBubble(server, capped, counter) catch {};
         const out = std.fmt.bufPrint(&scratch, "{{\"ok\":true,\"counter\":{d}}}", .{counter}) catch return;
         return respond(conn, 200, out);
