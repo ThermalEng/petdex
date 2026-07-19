@@ -964,7 +964,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             const pet_h = frame_h * model.scale;
             // The window is fitted to the sprite; while a bubble
             // shows, the sprite sits bottom-center under the band.
-            const window_w = if (bubbleActive(model)) @max(pet_w, bubble_win_w) else pet_w;
+            const window_w = if (bubbleActive(model)) @max(pet_w, @min(bubble_win_w, bubbleColW(model) + 80)) else pet_w;
             const left = read.x + (window_w - pet_w) / 2.0;
             const top = read.y + (if (bubbleActive(model)) bubbleBandH(model) else 0);
             const inside = read.cursor_x >= left and read.cursor_x <= left + pet_w and
@@ -1102,16 +1102,29 @@ fn lineCount(text: []const u8) f32 {
     return @floatFromInt(@min(lines, bubble_max_lines));
 }
 
-fn bubbleCardH(model: *const Model) f32 {
+/// Fluid text-column width: short one-liners get a snug card, anything
+/// longer takes the full column. Chars are display chars, the per-char
+/// width a generous sm-size average so the estimate over-provisions
+/// (the card itself is intrinsic — a misestimate costs pixels, never
+/// clipped text).
+fn bubbleColW(model: *const Model) f32 {
+    const title_chars = @min(charCount(model.bubble.title[0..model.bubble.title_len]), bubble_display_chars);
+    const text_chars = @min(charCount(model.bubble.text[0..model.bubble.text_len]), bubble_display_chars);
+    const longest = @max(title_chars, text_chars);
+    if (longest > bubble_chars_per_line) return bubble_text_w;
+    const w = @as(f32, @floatFromInt(longest)) * 7.4 + 10.0;
+    return @max(64.0, @min(bubble_text_w, w));
+}
+
+/// Window band: an over-provisioned bound from the char math (the card
+/// is intrinsic and the surplus renders as invisible transparent
+/// space), plus slack for word-wrap waste the estimate cannot see.
+fn bubbleBandH(model: *const Model) f32 {
     const title_lines = lineCount(model.bubble.title[0..model.bubble.title_len]);
     const text_lines = @max(lineCount(model.bubble.text[0..model.bubble.text_len]), 1);
     const gap: f32 = if (title_lines > 0) 2 else 0;
     const content = title_lines * bubble_line_h + gap + text_lines * bubble_line_h;
-    return bubble_card_pad * 2 + @max(content, 20);
-}
-
-fn bubbleBandH(model: *const Model) f32 {
-    return bubbleCardH(model) + tail_h_f + tail_gap;
+    return bubble_card_pad * 2 + @max(content, 20) + tail_h_f + tail_gap + 24;
 }
 const tail_h_f: f32 = 9;
 
@@ -1125,7 +1138,8 @@ fn bubbleActive(model: *const Model) bool {
 fn fitWindow(model: *const Model, fx: *Effects) bool {
     const pet_w = frame_w * model.scale;
     const pet_h = frame_h * model.scale;
-    const w = if (bubbleActive(model)) @max(pet_w, bubble_win_w) else pet_w;
+    const bubble_w = bubbleColW(model) + 80;
+    const w = if (bubbleActive(model)) @max(pet_w, @min(bubble_win_w, bubble_w)) else pet_w;
     const h = if (bubbleActive(model)) pet_h + bubbleBandH(model) else pet_h;
     return fx.resizeWindow("main", w, h, .bottom_center);
 }
@@ -1160,7 +1174,7 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
         var text_node = ui.text(.{
             .size = .sm,
             .wrap = true,
-            .width = bubble_text_w,
+            .width = bubbleColW(model),
         }, text_clipped);
         var avatar = ui.image(.{
             .width = 20,
@@ -1174,7 +1188,7 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
         else
             ui.el(.stack, .{ .width = 16, .height = 16 }, .{});
         var card = if (title_clipped.len > 0) blk: {
-            var title_node = ui.paragraph(.{ .size = .sm, .width = bubble_text_w }, &.{.{
+            var title_node = ui.paragraph(.{ .size = .sm, .width = bubbleColW(model) }, &.{.{
                 .text = title_clipped,
                 .weight = .bold,
             }});
@@ -1186,7 +1200,7 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
             }, .{
                 ui.row(.{ .gap = 8, .cross = .center }, .{
                     avatar,
-                    ui.column(.{ .gap = 2, .width = bubble_text_w, .cross = .start }, .{ title_node, text_node }),
+                    ui.column(.{ .gap = 2, .width = bubbleColW(model), .cross = .start }, .{ title_node, text_node }),
                     spinner_slot,
                 }),
             });
@@ -1198,7 +1212,7 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
             }, .{
                 ui.row(.{ .gap = 8, .cross = .center }, .{
                     avatar,
-                    ui.column(.{ .width = bubble_text_w, .cross = .start }, .{text_node}),
+                    ui.column(.{ .width = bubbleColW(model), .cross = .start }, .{text_node}),
                     spinner_slot,
                 }),
             });
