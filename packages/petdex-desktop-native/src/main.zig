@@ -186,7 +186,7 @@ fn petdexTokens(model: *const Model) canvas.DesignTokens {
     if (model.high_contrast) return tokens;
     const c = &tokens.colors;
     if (model.dark) {
-        c.background = canvas.Color.rgb8(12, 12, 14);
+        c.background = canvas.Color.rgb8(26, 26, 29);
         c.surface = canvas.Color.rgb8(25, 25, 28);
         c.surface_subtle = canvas.Color.rgb8(45, 45, 48);
         c.surface_pressed = canvas.Color.rgb8(22, 27, 67);
@@ -195,7 +195,7 @@ fn petdexTokens(model: *const Model) canvas.DesignTokens {
         c.accent = canvas.Color.rgb8(137, 163, 255);
         c.destructive = canvas.Color.rgb8(250, 105, 94);
     } else {
-        c.background = canvas.Color.rgb8(247, 250, 255);
+        c.background = canvas.Color.rgb8(253, 254, 255);
         c.surface = canvas.Color.rgb8(255, 255, 255);
         c.surface_subtle = canvas.Color.rgb8(236, 238, 244);
         c.surface_pressed = canvas.Color.rgb8(233, 238, 251);
