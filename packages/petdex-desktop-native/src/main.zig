@@ -17,6 +17,7 @@ const runner = @import("runner");
 extern "c" fn system(command: [*:0]const u8) c_int;
 const native_sdk = @import("native_sdk");
 const hook_server = @import("hook_server.zig");
+const hook_runner = @import("hook_runner.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 
@@ -1280,6 +1281,24 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     });
 }
 
+/// Keep `~/.petdex/bin/petdex-hook` pointing at the running binary so
+/// agent hooks survive app updates: the hooks reference the stable
+/// symlink, the app re-aims it every boot.
+fn refreshHookSymlink(argv0: []const u8) void {
+    const home = env_home orelse return;
+    var argv0_z: [1024]u8 = undefined;
+    const az = std.fmt.bufPrintZ(&argv0_z, "{s}", .{argv0}) catch return;
+    var self_buf: [1024]u8 = undefined;
+    const rp = std.c.realpath(az, &self_buf) orelse return;
+    var dir_z: [512]u8 = undefined;
+    const bin = std.fmt.bufPrintZ(&dir_z, "{s}/.petdex/bin", .{home}) catch return;
+    _ = std.c.mkdir(bin, 0o755);
+    var link_z: [512]u8 = undefined;
+    const link = std.fmt.bufPrintZ(&link_z, "{s}/.petdex/bin/petdex-hook", .{home}) catch return;
+    _ = std.c.unlink(link);
+    _ = std.c.symlink(rp, link);
+}
+
 // -------------------------------------------------------------------- app
 
 const app_menus = [_]native_sdk.platform.Menu{.{
@@ -1295,6 +1314,19 @@ const PetdexApp = native_sdk.UiApp(Model, Msg);
 
 pub fn main(init: std.process.Init) !void {
     env_home = init.environ_map.get("HOME");
+    // Hook hot path: `<binary> bubble <phase> [agent]` runs the
+    // in-binary runner and exits before any UI machinery spins up.
+    var args_it = std.process.Args.Iterator.init(init.minimal.args);
+    const argv0: ?[]const u8 = args_it.next();
+    if (args_it.next()) |cmd| {
+        if (std.mem.eql(u8, cmd, "bubble")) {
+            const phase = args_it.next() orelse return;
+            const agent: ?[]const u8 = args_it.next();
+            hook_runner.run(phase, agent, env_home orelse return);
+            return;
+        }
+    }
+    if (argv0) |a0| refreshHookSymlink(a0);
     env_wanted_pet = init.environ_map.get("PETDEX_PET");
     boot_io = init.io;
     loadSheetPixels(init.io, boot_allocator, init.environ_map) catch |err| {
