@@ -1022,11 +1022,12 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
         });
     }
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
-    // The window is a fixed 640pt: everything but the pet list is
-    // constant chrome, so the list gets the exact remaining band and
-    // scrolls inside it instead of pushing the cards past the bottom.
+    // The scroll needs a definite band (grow cannot shrink a scroll
+    // below its intrinsic content). Budget, measured from a collapsed
+    // render: constant chrome incl. paddings = 263pt of the 640pt
+    // canvas, leaving 376 for the list at a 16pt bottom margin.
     const list_intrinsic: f32 = @as(f32, @floatFromInt(shown)) * 62.0 - 6.0;
-    const list_h: f32 = @min(392.0, list_intrinsic);
+    const list_h: f32 = @min(376.0, list_intrinsic);
     return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
         ui.scroll(.{ .height = list_h }, .{ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown]))}),
