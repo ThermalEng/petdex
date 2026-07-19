@@ -129,6 +129,7 @@ pub const Msg = union(enum) {
     appearance: native_sdk.platform.Appearance,
     toggle_bubbles,
     install_agent: u32,
+    uninstall_agent: u32,
     pet_filter: canvas.TextInputEvent,
     noop,
 
@@ -542,6 +543,42 @@ var initial_agents_prompted: bool = false;
 // assets/agents/, re-registered only when the agent changes.
 const avatar_image_id: u64 = 13;
 const tail_image_id: u64 = 14;
+const agent_icon_ids = [agent_hooks.agent_count]u64{ 9, 10, 11, 15 };
+const agent_icon_px: usize = 40;
+var agents_icons_ready: bool = false;
+var agents_icons_dark: bool = false;
+
+/// Register the four settings agent logos, one registry slot each,
+/// themed like the bubble avatar and refreshed on appearance flips.
+fn loadAgentsAtlas(dark: bool, fx: *Effects) void {
+    if (agents_icons_ready and agents_icons_dark == dark) return;
+    const kinds = [_]agent_hooks.AgentKind{ .claude_code, .codex, .gemini, .opencode };
+    for (kinds, 0..) |kind, cell| {
+        const name = kind.hookAgentName();
+        var path_buf: [128]u8 = undefined;
+        var probe: [1]u8 = undefined;
+        var png_path = std.fmt.bufPrint(&path_buf, "assets/agents/{s}-{s}.png", .{ name, if (dark) "dark" else "light" }) catch continue;
+        if (cReadFile(png_path, &probe) == null) {
+            png_path = std.fmt.bufPrint(&path_buf, "assets/agents/{s}.png", .{name}) catch continue;
+        }
+        if (cReadFile(png_path, &probe) == null) continue;
+        var tga_buf: [128]u8 = undefined;
+        var cmd_buf: [512]u8 = undefined;
+        const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-agenticon-{s}-{s}.tga", .{ name, if (dark) "d" else "l" }) catch continue;
+        if (cReadFile(tga_path, &probe) == null) {
+            const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}' --out '{s}' >/dev/null 2>&1", .{ png_path, tga_path }) catch continue;
+            _ = system(cmd);
+            if (cReadFile(tga_path, &probe) == null) continue;
+        }
+        var heap: [32 * 1024]u8 = undefined;
+        const bytes = cReadFile(tga_path, &heap) orelse continue;
+        const parsed = parseTga(boot_allocator, bytes) catch continue;
+        defer boot_allocator.free(parsed.pixels);
+        fx.registerImage(agent_icon_ids[cell], parsed.width, parsed.height, parsed.pixels) catch continue;
+    }
+    agents_icons_dark = dark;
+    agents_icons_ready = true;
+}
 const tail_w: usize = 18;
 const tail_h: usize = 9;
 var tail_dark: bool = false;
@@ -861,6 +898,13 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 else => {},
             }
         },
+        .uninstall_agent => |index| {
+            if (index >= agent_hooks.agent_count) return;
+            const home = env_home orelse return;
+            _ = agent_hooks.uninstall(boot_allocator, home, model.agents[index].kind);
+            if (model.agents[index].kind == .codex) model.codex_trust_note = false;
+            model.agents = agent_hooks.scan(boot_allocator, home);
+        },
         .install_agent => |index| {
             if (index >= agent_hooks.agent_count) return;
             const kind = model.agents[index].kind;
@@ -876,6 +920,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .open_settings => {
             if (env_home) |home| model.agents = agent_hooks.scan(boot_allocator, home);
+            loadAgentsAtlas(model.dark, fx);
             if (model.settings_open) {
                 // Already open, likely buried behind other windows:
                 // raise it instead of rebuilding an identical
@@ -917,6 +962,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 registerTail(model.dark, fx);
                 loadAgentAvatar(model.bubble.agent[0..model.bubble.agent_len], model.dark, fx);
             }
+            if (model.settings_open) loadAgentsAtlas(model.dark, fx);
             model.high_contrast = a.high_contrast;
             model.reduce_motion = a.reduce_motion;
         },
@@ -1379,26 +1425,39 @@ fn agentsSection(ui: *AppUi, model: *const Model) AppUi.Node {
     for (model.agents, 0..) |info, i| {
         if (info.status == .absent) continue;
         const trailing = if (info.status == .current)
-            ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .accent } }, "Connected")
+            ui.button(.{
+                .size = .sm,
+                .variant = .secondary,
+                .on_press = Msg{ .uninstall_agent = @intCast(i) },
+            }, "Disconnect")
         else
             ui.button(.{
                 .size = .sm,
                 .variant = .primary,
                 .on_press = Msg{ .install_agent = @intCast(i) },
             }, if (info.status == .node) "Update" else "Install");
-        rows[count] = ui.el(.list_item, .{
-            .height = 52,
-            .padding = 8,
+        var logo = ui.image(.{
+            .width = 24,
+            .height = 24,
+            .image = if (agents_icons_ready) agent_icon_ids[@intFromEnum(info.kind)] else 0,
+            .semantics = .{ .label = info.kind.displayName() },
+        });
+        logo.widget.image_fit = .contain;
+        rows[count] = ui.el(.panel, .{
+            .padding = 12,
             .gap = 12,
             .cross = .center,
             .style_tokens = .{ .background = .surface, .radius = .md },
             .semantics = .{ .label = info.kind.displayName() },
         }, .{
+            ui.row(.{ .gap = 12, .cross = .center }, .{
+            logo,
             ui.column(.{ .grow = 1, .main = .center }, .{
                 ui.text(.{}, info.kind.displayName()),
                 ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, agentStatusCaption(info, model.codex_trust_note)),
             }),
             trailing,
+            }),
         });
         count += 1;
     }
