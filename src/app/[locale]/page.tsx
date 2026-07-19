@@ -164,15 +164,15 @@ export default async function Home({
             <div className="mt-5 flex w-full flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
               <StaticCommandLine
                 command="npx petdex install boba"
-                className="btn-3d w-full sm:w-auto"
+                className="btn-3d h-10 w-full text-[13px] sm:w-auto"
               />
               <DownloadDesktopCTA
                 href={`/${locale}/download`}
                 source="hero_primary"
-                className="btn-3d-brand inline-flex h-12 items-center justify-center gap-2 rounded-full bg-brand-deep px-5 text-sm font-semibold text-white transition hover:bg-brand"
+                className="btn-3d-brand inline-flex h-10 items-center justify-center gap-1.5 rounded-full bg-brand-deep px-4 text-[13px] font-semibold text-white transition hover:bg-brand dark:text-[#0b0b18]"
               >
                 {t("downloadCta")}
-                <ArrowRight className="size-4" />
+                <ArrowRight className="size-3.5" />
               </DownloadDesktopCTA>
             </div>
           </div>
