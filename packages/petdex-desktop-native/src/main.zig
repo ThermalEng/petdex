@@ -125,6 +125,7 @@ pub const Msg = union(enum) {
     open_pets_folder,
     open_pet_page: u32,
     appearance: native_sdk.platform.Appearance,
+    toggle_bubbles,
     noop,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
@@ -169,6 +170,7 @@ pub const Model = struct {
     scale: f32 = 0.7,
     active_pet: u32 = 0,
     window_fitted: bool = false,
+    bubbles_enabled: bool = true,
     dark: bool = true,
     high_contrast: bool = false,
     reduce_motion: bool = false,
@@ -453,7 +455,7 @@ fn saveSettings(model: *const Model) void {
     const path = settingsPath(&path_buf) orelse return;
     var buf: [256]u8 = undefined;
     const active = if (model.active_pet < catalog_len) catalog[model.active_pet].slice() else "";
-    const json = std.fmt.bufPrint(&buf, "{{\"active_pet\":\"{s}\",\"scale\":{d:.2}}}", .{ active, model.scale }) catch return;
+    const json = std.fmt.bufPrint(&buf, "{{\"active_pet\":\"{s}\",\"scale\":{d:.2},\"bubbles\":{}}}", .{ active, model.scale, model.bubbles_enabled }) catch return;
     cWriteFile(path, json);
 }
 
@@ -515,6 +517,7 @@ fn loadSheetForPet(entry: *const CatalogEntry) bool {
 
 var initial_scale: f32 = 0.7;
 var initial_pet: u32 = 0;
+var initial_bubbles: bool = true;
 
 // ------------------------------------------------------------- avatars
 // One slot for the CURRENT bubble's agent avatar (claude-code, codex,
@@ -554,9 +557,10 @@ fn registerTail(dark: bool, fx: *Effects) void {
 var avatar_agent: [24]u8 = @splat(0);
 var avatar_agent_len: usize = 0;
 var avatar_ready: bool = false;
+var avatar_theme_dark: bool = false;
 
-fn loadAgentAvatar(agent: []const u8, fx: *Effects) void {
-    if (avatar_ready and std.mem.eql(u8, avatar_agent[0..avatar_agent_len], agent)) return;
+fn loadAgentAvatar(agent: []const u8, dark: bool, fx: *Effects) void {
+    if (avatar_ready and avatar_theme_dark == dark and std.mem.eql(u8, avatar_agent[0..avatar_agent_len], agent)) return;
     var safe = true;
     for (agent) |c| {
         if (!((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-')) safe = false;
@@ -564,13 +568,18 @@ fn loadAgentAvatar(agent: []const u8, fx: *Effects) void {
     var path_buf: [128]u8 = undefined;
     var probe: [1]u8 = undefined;
     const name = if (safe and agent.len > 0) agent else "fallback";
-    var png_path = std.fmt.bufPrint(&path_buf, "assets/agents/{s}.png", .{name}) catch return;
+    // Themed variant first (opencode ships light/dark glyphs), then
+    // the plain file, then the generic fallback.
+    var png_path = std.fmt.bufPrint(&path_buf, "assets/agents/{s}-{s}.png", .{ name, if (dark) "dark" else "light" }) catch return;
+    if (cReadFile(png_path, &probe) == null) {
+        png_path = std.fmt.bufPrint(&path_buf, "assets/agents/{s}.png", .{name}) catch return;
+    }
     if (cReadFile(png_path, &probe) == null) {
         png_path = std.fmt.bufPrint(&path_buf, "assets/agents/fallback.png", .{}) catch return;
     }
     var tga_buf: [128]u8 = undefined;
     var cmd_buf: [512]u8 = undefined;
-    const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-avatar-{s}.tga", .{name}) catch return;
+    const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-avatar-{s}-{s}.tga", .{ name, if (dark) "d" else "l" }) catch return;
     if (cReadFile(tga_path, &probe) == null) {
         const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}' --out '{s}' >/dev/null 2>&1", .{ png_path, tga_path }) catch return;
         _ = system(cmd);
@@ -583,6 +592,7 @@ fn loadAgentAvatar(agent: []const u8, fx: *Effects) void {
     fx.registerImage(avatar_image_id, parsed.width, parsed.height, parsed.pixels) catch return;
     @memcpy(avatar_agent[0..agent.len], agent);
     avatar_agent_len = agent.len;
+    avatar_theme_dark = dark;
     avatar_ready = true;
 }
 
@@ -658,6 +668,9 @@ fn loadSheetPixels(io: std.Io, allocator: std.mem.Allocator, environ_map: *std.p
             if (hook_server.jsonStringPub(json, "active_pet")) |v| wanted = v;
             if (hook_server.jsonNumberPub(json, "scale")) |v| {
                 if (v >= 0.3 and v <= 1.5) initial_scale = @floatCast(v);
+            }
+            if (hook_server.jsonStringPub(json, "bubbles")) |_| {} else if (std.mem.indexOf(u8, json, "\"bubbles\":false") != null) {
+                initial_bubbles = false;
             }
         }
     }
@@ -740,6 +753,7 @@ pub fn boot(model: *Model, fx: *Effects) void {
     });
     if (sheet.pixels.len == 0) return;
     model.scale = initial_scale;
+    model.bubbles_enabled = initial_bubbles;
     model.active_pet = initial_pet;
     registerStateFrames(model.state, fx);
     model.sheet_loaded = true;
@@ -828,6 +842,11 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             armFrameTimer(model, fx);
             saveSettings(model);
         },
+        .toggle_bubbles => {
+            model.bubbles_enabled = !model.bubbles_enabled;
+            _ = fitWindow(model, fx);
+            saveSettings(model);
+        },
         .set_scale => |fraction| {
             model.scale = 0.4 + fraction * 0.8;
             _ = fitWindow(model, fx);
@@ -841,7 +860,10 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .appearance => |a| {
             model.dark = a.color_scheme == .dark;
-            if (model.bubble.text_len > 0) registerTail(model.dark, fx);
+            if (model.bubble.text_len > 0) {
+                registerTail(model.dark, fx);
+                loadAgentAvatar(model.bubble.agent[0..model.bubble.agent_len], model.dark, fx);
+            }
             model.high_contrast = a.high_contrast;
             model.reduce_motion = a.reduce_motion;
         },
@@ -965,7 +987,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             if (hook_server.mailbox.takeBubble(&model.bubble)) {
                 _ = fitWindow(model, fx);
                 if (model.bubble.text_len > 0) {
-                    loadAgentAvatar(model.bubble.agent[0..model.bubble.agent_len], fx);
+                    loadAgentAvatar(model.bubble.agent[0..model.bubble.agent_len], model.dark, fx);
                     registerTail(model.dark, fx);
                 }
             }
@@ -1021,7 +1043,7 @@ const bubble_band_h: f32 = 84;
 const bubble_min_w: f32 = 216;
 
 fn bubbleActive(model: *const Model) bool {
-    return model.bubble.text_len > 0;
+    return model.bubbles_enabled and model.bubble.text_len > 0;
 }
 
 /// The window tracks exactly what is drawn: the sprite, plus a band
@@ -1181,10 +1203,11 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
     // The scroll needs a definite band (grow cannot shrink a scroll
     // below its intrinsic content). Budget, measured from a collapsed
-    // render: constant chrome incl. paddings = 263pt of the 640pt
-    // canvas, leaving 376 for the list at a 16pt bottom margin.
+    // render: constant chrome incl. paddings = 339pt of the 640pt
+    // canvas (three cards), leaving 300 for the list at a 16pt bottom
+    // margin.
     const list_intrinsic: f32 = @as(f32, @floatFromInt(shown)) * 62.0 - 6.0;
-    const list_h: f32 = @min(376.0, list_intrinsic);
+    const list_h: f32 = @min(300.0, list_intrinsic);
     return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
         ui.scroll(.{ .height = list_h }, .{ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown]))}),
@@ -1196,6 +1219,19 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
                     ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "Adjust the size of your pet"),
                 }),
                 ui.el(.slider, .{ .width = 150, .value = scale_fraction, .on_value = AppUi.valueMsg(.set_scale), .semantics = .{ .label = "Pet size" } }, .{}),
+            }),
+        }),
+        ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
+            ui.row(.{ .padding = 12, .cross = .center, .gap = 12 }, .{
+                ui.column(.{ .grow = 1 }, .{
+                    ui.text(.{}, "Show messages"),
+                    ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "Agent activity bubbles over the pet"),
+                }),
+                ui.el(.switch_control, .{
+                    .selected = model.bubbles_enabled,
+                    .on_toggle = .toggle_bubbles,
+                    .semantics = .{ .label = "Show messages" },
+                }, .{}),
             }),
         }),
         ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
