@@ -168,6 +168,7 @@ pub const Model = struct {
     /// 0.4..1.2 over this.
     scale: f32 = 0.7,
     active_pet: u32 = 0,
+    window_fitted: bool = false,
     dark: bool = true,
     high_contrast: bool = false,
     reduce_motion: bool = false,
@@ -750,6 +751,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .set_scale => |fraction| {
             model.scale = 0.4 + fraction * 0.8;
+            _ = fx.resizeWindow("main", frame_w * model.scale, frame_h * model.scale, .bottom_center);
             saveSettings(model);
         },
         .open_pet_page => |index| {
@@ -773,6 +775,12 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .frame_clock => {
             if (!model.sheet_loaded) return;
+            if (!model.window_fitted) {
+                // The shell window boots at the slider's max extent;
+                // fit it to the drawn sprite so the whole window IS the
+                // pet — no invisible band above it eating clicks.
+                model.window_fitted = fx.resizeWindow("main", frame_w * model.scale, frame_h * model.scale, .bottom_center);
+            }
             const now = fx.wallMs();
             if (model.throwing) {
                 // Momentum rides the frame clock with the real elapsed
@@ -819,6 +827,18 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                     } else {
                         pushSample(model, read.x, read.y, now);
                     }
+                    // Mid-drag animation: the pet runs toward where it
+                    // is being pulled, from the same 100ms velocity
+                    // tail the release uses (per-frame dx flaps).
+                    if (releaseVelocity(model)) |vel| {
+                        if (vel.x >= physics_min_vel) {
+                            setThrowState(model, .@"running-right", fx);
+                        } else if (vel.x <= -physics_min_vel) {
+                            setThrowState(model, .@"running-left", fx);
+                        } else if (@abs(vel.x) < 20 and @abs(vel.y) < 20) {
+                            setThrowState(model, .idle, fx);
+                        }
+                    }
                     return;
                 }
                 // Release: velocity from our own 100ms sample tail,
@@ -839,10 +859,10 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             }
             const pet_w = frame_w * model.scale;
             const pet_h = frame_h * model.scale;
-            const left = read.x + (win_w - pet_w) / 2.0;
-            const top = read.y + (win_h - pet_h);
-            const inside = read.cursor_x >= left and read.cursor_x <= left + pet_w and
-                read.cursor_y >= top and read.cursor_y <= top + pet_h;
+            // The window is fitted to the sprite, so the pet rect IS
+            // the window rect.
+            const inside = read.cursor_x >= read.x and read.cursor_x <= read.x + pet_w and
+                read.cursor_y >= read.y and read.cursor_y <= read.y + pet_h;
             if (read.primary_down and !model.primary_was_down and inside) {
                 model.dragging = true;
                 model.grab_dx = read.cursor_x - read.x;
