@@ -737,7 +737,16 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .cycle_state => {
             applyState(model, model.state.next(), 0, fx);
         },
-        .open_settings => model.settings_open = true,
+        .open_settings => {
+            if (model.settings_open) {
+                // Already open, likely buried behind other windows:
+                // raise it instead of rebuilding an identical
+                // descriptor (a no-op).
+                fx.focusWindow(settings_window_label);
+                return;
+            }
+            model.settings_open = true;
+        },
         .settings_closed => model.settings_open = false,
         .close_pet => fx.closeWindow("main"),
         .select_pet => |index| {
