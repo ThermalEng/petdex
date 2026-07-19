@@ -1466,7 +1466,7 @@ fn agentsSection(ui: *AppUi, model: *const Model) AppUi.Node {
             ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "No coding agents detected on this machine"),
         });
     }
-    return ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..count]));
+    return ui.column(.{ .gap = 12 }, @as([]const AppUi.Node, rows[0..count]));
 }
 
 var more_label_buf: [48]u8 = undefined;
