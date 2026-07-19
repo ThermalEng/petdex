@@ -155,10 +155,9 @@ const hooks = {
   },
 };
 
-const PetdexPlugin = {
-  id: "petdex",
-  server: async () => hooks,
-};
+// opencode's plugin API: the export IS an async function receiving
+// the plugin context and returning the hooks object.
+const PetdexPlugin = async () => hooks;
 
 export default PetdexPlugin;
 export { PetdexPlugin };

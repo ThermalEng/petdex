@@ -835,10 +835,7 @@ const hooks = {
   },
 };
 
-const PetdexPlugin = {
-  id: "petdex",
-  server: async () => hooks,
-};
+const PetdexPlugin = async () => hooks;
 
 export default PetdexPlugin;
 export { PetdexPlugin };
