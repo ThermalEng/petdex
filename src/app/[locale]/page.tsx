@@ -19,8 +19,8 @@ import { CollectionActionMenu } from "@/components/collections/collection-action
 import { CollectionCover } from "@/components/collections/collection-cover";
 import { DiscordLink } from "@/components/community/discord-link";
 import { WechatCommunityDialog } from "@/components/community/wechat-community-dialog";
+import { CommandLine } from "@/components/download/command-line";
 import { DownloadDesktopCTA } from "@/components/download/download-desktop-cta";
-import { StaticCommandLine } from "@/components/download/static-command-line";
 import { DiscordIcon } from "@/components/icons/wechat-icon";
 import { JsonLd } from "@/components/layout/json-ld";
 import { PetGallery } from "@/components/pets/pet-gallery";
@@ -162,9 +162,9 @@ export default async function Home({
               })}
             </p>
             <div className="mt-5 flex w-full flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
-              <StaticCommandLine
+              <CommandLine
                 command="npx petdex install boba"
-                className="btn-3d h-10 w-full text-[13px] sm:w-auto"
+                className="btn-3d h-10 w-full sm:w-auto"
               />
               <DownloadDesktopCTA
                 href={`/${locale}/download`}
