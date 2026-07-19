@@ -1006,7 +1006,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     // constant chrome, so the list gets the exact remaining band and
     // scrolls inside it instead of pushing the cards past the bottom.
     const list_intrinsic: f32 = @as(f32, @floatFromInt(shown)) * 62.0 - 6.0;
-    const list_h: f32 = @min(344.0, list_intrinsic);
+    const list_h: f32 = @min(392.0, list_intrinsic);
     return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
         ui.scroll(.{ .height = list_h }, .{ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown]))}),
