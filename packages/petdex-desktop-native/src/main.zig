@@ -1313,17 +1313,12 @@ fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []cons
         count += 1;
     }
     if (model.settings_open) {
-        var agent_rows: f32 = 0;
-        for (model.agents) |info| {
-            if (info.status != .absent) agent_rows += 1;
-        }
-        const agents_h: f32 = 46 + (if (agent_rows > 0) agent_rows * 58 else 60);
         scratch.windows[count] = .{
             .label = settings_window_label,
             .canvas_label = settings_canvas_label,
             .title = "Petdex Settings",
             .width = 420,
-            .height = 640 + agents_h,
+            .height = 680,
             .resizable = false,
             .on_close = .settings_closed,
         };
@@ -1430,16 +1425,12 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
         });
     }
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
-    // The scroll needs a definite band (grow cannot shrink a scroll
-    // below its intrinsic content). Budget, measured from a collapsed
-    // render: constant chrome incl. paddings = 339pt of the 640pt
-    // canvas (three cards), leaving 300 for the list at a 16pt bottom
-    // margin.
-    const list_intrinsic: f32 = @as(f32, @floatFromInt(shown)) * 62.0 - 6.0;
-    const list_h: f32 = @min(300.0, list_intrinsic);
-    return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
+    // One scrollable page: the root scroll takes the window frame and
+    // everything - full pet catalog included - flows inside it. No
+    // more per-section band budgets.
+    return ui.scroll(.{ .grow = 1 }, .{ui.column(.{ .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
-        ui.scroll(.{ .height = list_h }, .{ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown]))}),
+        ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown])),
         ui.text(.{ .size = .heading }, "Agents"),
         agentsSection(ui, model),
         ui.text(.{ .size = .heading }, "Appearance"),
@@ -1474,7 +1465,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
                 ui.button(.{ .on_press = .open_pets_folder }, "Open folder"),
             }),
         }),
-    });
+    })});
 }
 
 /// Keep `~/.petdex/bin/petdex-hook` pointing at the running binary so
