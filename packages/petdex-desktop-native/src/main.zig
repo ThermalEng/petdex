@@ -124,6 +124,7 @@ pub const Msg = union(enum) {
     set_scale: f32,
     open_pets_folder,
     open_pet_page: u32,
+    appearance: native_sdk.platform.Appearance,
     noop,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
@@ -167,7 +168,48 @@ pub const Model = struct {
     /// 0.4..1.2 over this.
     scale: f32 = 0.7,
     active_pet: u32 = 0,
+    dark: bool = true,
+    high_contrast: bool = false,
+    reduce_motion: bool = false,
 };
+
+/// Petdex web tokens (globals.css) translated from OKLCH: brand purple
+/// #5266ea family, cool-tinted near-white light surfaces, stone-900
+/// dark cards. High contrast keeps the stock loud register untouched.
+fn petdexTokens(model: *const Model) canvas.DesignTokens {
+    const scheme: canvas.ColorScheme = if (model.dark) .dark else .light;
+    var tokens = canvas.DesignTokens.theme(.{
+        .color_scheme = scheme,
+        .contrast = if (model.high_contrast) .high else .standard,
+        .reduce_motion = model.reduce_motion,
+    });
+    if (model.high_contrast) return tokens;
+    const c = &tokens.colors;
+    if (model.dark) {
+        c.background = canvas.Color.rgb8(12, 12, 14);
+        c.surface = canvas.Color.rgb8(25, 25, 28);
+        c.surface_subtle = canvas.Color.rgb8(45, 45, 48);
+        c.surface_pressed = canvas.Color.rgb8(22, 27, 67);
+        c.text = canvas.Color.rgb8(238, 238, 239);
+        c.text_muted = canvas.Color.rgb8(156, 158, 168);
+        c.accent = canvas.Color.rgb8(137, 163, 255);
+        c.destructive = canvas.Color.rgb8(250, 105, 94);
+    } else {
+        c.background = canvas.Color.rgb8(247, 250, 255);
+        c.surface = canvas.Color.rgb8(255, 255, 255);
+        c.surface_subtle = canvas.Color.rgb8(236, 238, 244);
+        c.surface_pressed = canvas.Color.rgb8(233, 238, 251);
+        c.text = canvas.Color.rgb8(9, 9, 9);
+        c.text_muted = canvas.Color.rgb8(88, 92, 106);
+        c.accent = canvas.Color.rgb8(78, 98, 235);
+        c.destructive = canvas.Color.rgb8(212, 12, 26);
+    }
+    return tokens.withOverrides(canvas.accentOverrides(c.accent, scheme));
+}
+
+fn onAppearance(appearance: native_sdk.platform.Appearance) ?Msg {
+    return .{ .appearance = appearance };
+}
 
 pub const max_catalog = 32;
 pub const CatalogEntry = struct {
@@ -716,6 +758,11 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             const cmd = std.fmt.bufPrintZ(&buf, "/usr/bin/open 'https://petdex.dev/pets/{s}'", .{catalog[index].slice()}) catch return;
             _ = system(cmd);
         },
+        .appearance => |a| {
+            model.dark = a.color_scheme == .dark;
+            model.high_contrast = a.high_contrast;
+            model.reduce_motion = a.reduce_motion;
+        },
         .noop => {},
         .open_pets_folder => {
             if (env_home) |home| {
@@ -1012,6 +1059,8 @@ pub fn main(init: std.process.Init) !void {
         .on_frame = onFrame,
         .windows_fn = petdexWindows,
         .window_view = petdexWindowView,
+        .tokens_fn = petdexTokens,
+        .on_appearance = onAppearance,
     });
     defer app_state.destroy();
     app_state.model = .{};
