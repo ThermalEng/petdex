@@ -55,7 +55,7 @@ pub const AgentInfo = struct {
 pub const agent_count = 4;
 
 /// The five Claude-shaped hook events the bubble pipeline rides.
-const claude_events = [_]struct { event: []const u8, phase: []const u8 }{
+const claude_events = [_]HookEvent{
     .{ .event = "UserPromptSubmit", .phase = "user-prompt" },
     .{ .event = "PreToolUse", .phase = "pre" },
     .{ .event = "PostToolUse", .phase = "post" },
@@ -166,11 +166,18 @@ pub fn scan(allocator: std.mem.Allocator, home: []const u8) [agent_count]AgentIn
             .claude_code => std.fmt.bufPrint(&path, "{s}/.claude/settings.json", .{home}) catch continue,
             .codex => std.fmt.bufPrint(&path, "{s}/.codex/hooks.json", .{home}) catch continue,
             .gemini => std.fmt.bufPrint(&path, "{s}/.gemini/settings.json", .{home}) catch continue,
-            .opencode => std.fmt.bufPrint(&path, "{s}/.config/opencode/plugin/petdex.js", .{home}) catch continue,
+            .opencode => std.fmt.bufPrint(&path, "{s}/.config/opencode/plugins/petdex.js", .{home}) catch continue,
         };
         if (readFileAlloc(allocator, cfg, 512 * 1024)) |content| {
             defer allocator.free(content);
-            info.status = classifyConfig(content);
+            // The opencode plugin never touches a runner: a current
+            // snapshot means connected, anything else shows as
+            // outdated so Update can refresh it.
+            if (info.kind == .opencode) {
+                info.status = if (std.mem.eql(u8, std.mem.trim(u8, content, " \n"), std.mem.trim(u8, opencode_plugin, " \n"))) .current else .node;
+            } else {
+                info.status = classifyConfig(content);
+            }
         }
     }
     return out;
@@ -185,9 +192,47 @@ fn emptyObject(a: std.mem.Allocator) std.json.Value {
     return .{ .object = std.json.ObjectMap.init(a, &.{}, &.{}) catch unreachable };
 }
 
+const HookEvent = struct { event: []const u8, phase: []const u8 };
+
 pub fn installClaude(allocator: std.mem.Allocator, home: []const u8) bool {
     var path_buf: [512]u8 = undefined;
     const path = std.fmt.bufPrint(&path_buf, "{s}/.claude/settings.json", .{home}) catch return false;
+    return installJsonHooks(allocator, path, &claude_events, "claude-code");
+}
+
+/// Gemini rides the exact same settings.json hook shape as Claude,
+/// with its own event names.
+const gemini_events = [_]HookEvent{
+    .{ .event = "BeforeTool", .phase = "pre" },
+    .{ .event = "AfterTool", .phase = "post" },
+    .{ .event = "SessionEnd", .phase = "stop" },
+};
+
+pub fn installGemini(allocator: std.mem.Allocator, home: []const u8) bool {
+    var path_buf: [512]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buf, "{s}/.gemini/settings.json", .{home}) catch return false;
+    return installJsonHooks(allocator, path, &gemini_events, "gemini");
+}
+
+/// opencode has no hooks: it loads a self-contained JS plugin that
+/// posts straight to the sidecar from inside its own runtime. Install
+/// is writing one file (a build-time snapshot of the CLI's template).
+const opencode_plugin = @embedFile("assets/opencode-plugin.js");
+
+pub fn installOpencode(allocator: std.mem.Allocator, home: []const u8) bool {
+    var path_buf: [512]u8 = undefined;
+    var z: [512]u8 = undefined;
+    const dir = std.fmt.bufPrint(&path_buf, "{s}/.config/opencode/plugins", .{home}) catch return false;
+    _ = std.c.mkdir(std.fmt.bufPrintZ(&z, "{s}", .{dir}) catch return false, 0o755);
+    const path = std.fmt.bufPrint(&path_buf, "{s}/.config/opencode/plugins/petdex.js", .{home}) catch return false;
+    backupOnce(allocator, path);
+    return writeFile(path, opencode_plugin);
+}
+
+/// JSON-hook agents (Claude Code, Gemini): std.json Value roundtrip of
+/// settings.json that filters existing petdex entries per event and
+/// appends the canonical one, touching nothing else.
+fn installJsonHooks(allocator: std.mem.Allocator, path: []const u8, events: []const HookEvent, agent: []const u8) bool {
     const existing = readFileAlloc(allocator, path, 1024 * 1024);
     defer if (existing) |e| allocator.free(e);
     backupOnce(allocator, path);
@@ -210,7 +255,7 @@ pub fn installClaude(allocator: std.mem.Allocator, home: []const u8) bool {
     }
     const hooks_obj = &hooks_entry.value_ptr.object;
 
-    inline for (claude_events) |ev| {
+    for (events) |ev| {
         const arr_entry = hooks_obj.getOrPut(a, ev.event) catch return false;
         if (!arr_entry.found_existing or arr_entry.value_ptr.* != .array) {
             arr_entry.value_ptr.* = .{ .array = std.json.Array.init(a) };
@@ -226,7 +271,7 @@ pub fn installClaude(allocator: std.mem.Allocator, home: []const u8) bool {
             }
         }
         var cmd_buf: [512]u8 = undefined;
-        const cmd = canonicalCommand(&cmd_buf, ev.phase, "claude-code") orelse return false;
+        const cmd = canonicalCommand(&cmd_buf, ev.phase, agent) orelse return false;
         var hook_obj = std.json.ObjectMap.init(a, &.{}, &.{}) catch return false;
         hook_obj.put(a, "type", .{ .string = "command" }) catch return false;
         hook_obj.put(a, "command", .{ .string = a.dupe(u8, cmd) catch return false }) catch return false;

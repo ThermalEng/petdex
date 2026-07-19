@@ -129,6 +129,7 @@ pub const Msg = union(enum) {
     appearance: native_sdk.platform.Appearance,
     toggle_bubbles,
     install_agent: u32,
+    pet_filter: canvas.TextInputEvent,
     noop,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
@@ -184,6 +185,8 @@ pub const Model = struct {
     },
     agents_prompted: bool = false,
     codex_trust_note: bool = false,
+    pet_filter: [48]u8 = @splat(0),
+    pet_filter_len: usize = 0,
     dark: bool = true,
     high_contrast: bool = false,
     reduce_motion: bool = false,
@@ -840,6 +843,24 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .cycle_state => {
             applyState(model, model.state.next(), 0, fx);
         },
+        .pet_filter => |edit| {
+            switch (edit) {
+                .insert_text => |txt| {
+                    const room = model.pet_filter.len - model.pet_filter_len;
+                    const n = @min(txt.len, room);
+                    @memcpy(model.pet_filter[model.pet_filter_len..][0..n], txt[0..n]);
+                    model.pet_filter_len += n;
+                },
+                .delete_backward, .delete_word_backward => {
+                    while (model.pet_filter_len > 0) {
+                        model.pet_filter_len -= 1;
+                        if ((model.pet_filter[model.pet_filter_len] & 0xC0) != 0x80) break;
+                    }
+                },
+                .clear => model.pet_filter_len = 0,
+                else => {},
+            }
+        },
         .install_agent => |index| {
             if (index >= agent_hooks.agent_count) return;
             const kind = model.agents[index].kind;
@@ -847,7 +868,8 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             const ok = switch (kind) {
                 .claude_code => agent_hooks.installClaude(boot_allocator, home),
                 .codex => agent_hooks.installCodex(boot_allocator, home),
-                else => false,
+                .gemini => agent_hooks.installGemini(boot_allocator, home),
+                .opencode => agent_hooks.installOpencode(boot_allocator, home),
             };
             if (ok and kind == .codex) model.codex_trust_note = true;
             model.agents = agent_hooks.scan(boot_allocator, home);
@@ -1348,17 +1370,14 @@ fn agentsSection(ui: *AppUi, model: *const Model) AppUi.Node {
     var count: usize = 0;
     for (model.agents, 0..) |info, i| {
         if (info.status == .absent) continue;
-        const installable = info.kind == .claude_code or info.kind == .codex;
         const trailing = if (info.status == .current)
             ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .accent } }, "Connected")
-        else if (installable)
+        else
             ui.button(.{
                 .size = .sm,
                 .variant = .primary,
                 .on_press = Msg{ .install_agent = @intCast(i) },
-            }, if (info.status == .node) "Update" else "Install")
-        else
-            ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "Via petdex CLI");
+            }, if (info.status == .node) "Update" else "Install");
         rows[count] = ui.el(.list_item, .{
             .height = 52,
             .padding = 8,
@@ -1383,10 +1402,29 @@ fn agentsSection(ui: *AppUi, model: *const Model) AppUi.Node {
     return ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..count]));
 }
 
+fn petMatchesFilter(name: []const u8, filter: []const u8) bool {
+    if (filter.len == 0) return true;
+    if (name.len < filter.len) return false;
+    var i: usize = 0;
+    while (i + filter.len <= name.len) : (i += 1) {
+        var match = true;
+        for (filter, 0..) |c, j| {
+            if (std.ascii.toLower(name[i + j]) != std.ascii.toLower(c)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
 fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     var rows: [max_catalog]AppUi.Node = undefined;
-    const shown = @min(catalog_len, max_catalog);
-    for (catalog[0..shown], 0..) |*entry, i| {
+    var shown: usize = 0;
+    const filter = model.pet_filter[0..model.pet_filter_len];
+    for (catalog[0..@min(catalog_len, max_catalog)], 0..) |*entry, i| {
+        if (!petMatchesFilter(entry.slice(), filter)) continue;
         const active = i == model.active_pet;
         var thumb = ui.image(.{
             .width = 40,
@@ -1402,7 +1440,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
         );
         thumb.widget.image_fit = .contain;
         thumb.widget.image_sampling = .nearest;
-        rows[i] = ui.el(.list_item, .{
+        rows[shown] = ui.el(.list_item, .{
             .height = 56,
             .padding = 8,
             .gap = 12,
@@ -1423,6 +1461,7 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
                 ui.button(.{ .size = .sm, .width = 64, .variant = .primary, .on_press = Msg{ .select_pet = @intCast(i) } }, "Select"),
             ui.button(.{ .size = .sm, .variant = .secondary, .on_press = Msg{ .open_pet_page = @intCast(i) } }, "Open"),
         });
+        shown += 1;
     }
     const scale_fraction: f32 = (model.scale - 0.4) / 0.8;
     // One scrollable page: the root scroll takes the window frame and
@@ -1430,7 +1469,18 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     // more per-section band budgets.
     return ui.scroll(.{ .grow = 1 }, .{ui.column(.{ .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
-        ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown])),
+        ui.el(.search_field, .{
+            .height = 34,
+            .text = filter,
+            .on_input = AppUi.inputMsg(.pet_filter),
+            .placeholder = "Search pets",
+            .semantics = .{ .label = "Search pets" },
+        }, .{}),
+        // The catalog keeps its own bounded band (nested native scroll)
+        // so a long pet list never eats the whole page.
+        ui.scroll(.{ .height = @min(300.0, @max(60.0, @as(f32, @floatFromInt(shown)) * 62.0 - 6.0)) }, .{
+            ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown])),
+        }),
         ui.text(.{ .size = .heading }, "Agents"),
         agentsSection(ui, model),
         ui.text(.{ .size = .heading }, "Appearance"),
