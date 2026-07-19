@@ -1357,6 +1357,14 @@ fn petdexWindowView(ui: *PetdexApp.Ui, model: *const Model, window_label: []cons
 
 fn agentStatusCaption(info: agent_hooks.AgentInfo, codex_note: bool) []const u8 {
     if (info.kind == .codex and codex_note) return "Installed - restart Codex and approve its hooks once";
+    if (info.kind == .opencode) {
+        return switch (info.status) {
+            .absent => "Not detected",
+            .none => "Plugin not installed",
+            .node => "Plugin outdated",
+            .current => "Connected",
+        };
+    }
     return switch (info.status) {
         .absent => "Not detected",
         .none => "Hooks not installed",
@@ -1402,6 +1410,12 @@ fn agentsSection(ui: *AppUi, model: *const Model) AppUi.Node {
     return ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..count]));
 }
 
+var more_label_buf: [48]u8 = undefined;
+
+fn moreLabel(hidden: usize) []const u8 {
+    return std.fmt.bufPrint(&more_label_buf, "{d} more - type to filter", .{hidden}) catch "type to filter";
+}
+
 fn petMatchesFilter(name: []const u8, filter: []const u8) bool {
     if (filter.len == 0) return true;
     if (name.len < filter.len) return false;
@@ -1422,9 +1436,13 @@ fn petMatchesFilter(name: []const u8, filter: []const u8) bool {
 fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     var rows: [max_catalog]AppUi.Node = undefined;
     var shown: usize = 0;
+    var matches: usize = 0;
+    const max_visible: usize = 6;
     const filter = model.pet_filter[0..model.pet_filter_len];
     for (catalog[0..@min(catalog_len, max_catalog)], 0..) |*entry, i| {
         if (!petMatchesFilter(entry.slice(), filter)) continue;
+        matches += 1;
+        if (shown >= max_visible) continue;
         const active = i == model.active_pet;
         var thumb = ui.image(.{
             .width = 40,
@@ -1476,11 +1494,16 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
             .placeholder = "Search pets",
             .semantics = .{ .label = "Search pets" },
         }, .{}),
-        // The catalog keeps its own bounded band (nested native scroll)
-        // so a long pet list never eats the whole page.
-        ui.scroll(.{ .height = @min(300.0, @max(60.0, @as(f32, @floatFromInt(shown)) * 62.0 - 6.0)) }, .{
-            ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown])),
-        }),
+        // Search-first catalog: at most six rows render, the counter
+        // says what the filter is hiding. No nested scroll, so the
+        // page's extent is exact and the padding honest.
+        ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown])),
+        if (matches > shown)
+            ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, moreLabel(matches - shown))
+        else if (matches == 0)
+            ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "No pets match your search")
+        else
+            ui.el(.stack, .{}, .{}),
         ui.text(.{ .size = .heading }, "Agents"),
         agentsSection(ui, model),
         ui.text(.{ .size = .heading }, "Appearance"),
