@@ -1538,6 +1538,9 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
                 ui.button(.{ .on_press = .open_pets_folder }, "Open folder"),
             }),
         }),
+        // Trailing spacer: the column's own bottom padding is not part
+        // of the scroll extent, so the last card needs explicit air.
+        ui.el(.stack, .{ .height = 8 }, .{}),
     })});
 }
 
