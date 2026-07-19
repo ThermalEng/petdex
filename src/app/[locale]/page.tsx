@@ -140,7 +140,7 @@ export default async function Home({
       <JsonLd data={jsonLd} />
       <SurprisePetCard initialPet={surprisePet} />
       <SiteHeader />
-      <section className="petdex-hero relative -mt-[84px] overflow-clip pt-[84px]">
+      <section className="petdex-hero relative -mt-14 overflow-clip pt-14">
         <div className="relative mx-auto flex w-full max-w-[1440px] flex-col px-5 pb-10 md:px-8">
           <div className="mt-12 flex flex-col items-center text-center md:mt-16">
             <p className="inline-flex items-center gap-2 rounded-full border border-border-base bg-surface/60 px-3.5 py-1.5 font-mono text-[11px] tracking-[0.18em] text-brand uppercase backdrop-blur">

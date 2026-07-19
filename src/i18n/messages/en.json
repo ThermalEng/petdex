@@ -76,7 +76,8 @@
     "collaborator": "Collaborator",
     "manageAccount": "Manage account",
     "signOut": "Sign out",
-    "more": "More"
+    "more": "More",
+    "explore": "Explore"
   },
   "theme": {
     "toggle": "Toggle theme",
