@@ -10,8 +10,7 @@ type SubmitCTAProps = {
   href?: string;
 };
 
-const DEFAULT_CLASS =
-  "inline-flex h-10 items-center justify-center rounded-full bg-inverse px-4 text-sm font-medium text-on-inverse transition hover:bg-inverse-hover";
+const DEFAULT_CLASS = "";
 
 export function SubmitCTA({
   className = DEFAULT_CLASS,

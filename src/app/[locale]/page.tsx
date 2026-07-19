@@ -29,6 +29,7 @@ import { SurprisePetCard } from "@/components/pets/surprise-pet-card";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { SubmitCTA } from "@/components/submit/submit-cta";
+import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -169,7 +170,11 @@ export default async function Home({
               <DownloadDesktopCTA
                 href={`/${locale}/download`}
                 source="hero_primary"
-                className="btn-3d-brand inline-flex h-10 items-center justify-center gap-1.5 rounded-full bg-brand-deep px-4 text-[13px] font-semibold text-white transition hover:bg-brand dark:text-[#0b0b18]"
+                className={buttonVariants({
+                  variant: "petdex-cta",
+                  size: "petdex-pill",
+                  className: "gap-1.5",
+                })}
               >
                 {t("downloadCta")}
                 <ArrowRight className="size-3.5" />
@@ -180,7 +185,13 @@ export default async function Home({
           <HeroPetParade pets={heroPets} isZh={isZh} />
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted-3">
-            <SubmitCTA className="btn-3d inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-border-base bg-surface/70 px-4 text-[13px] font-medium text-foreground backdrop-blur transition hover:border-brand/30 hover:bg-brand/15 hover:text-brand">
+            <SubmitCTA
+              className={buttonVariants({
+                variant: "petdex-secondary",
+                size: "petdex-pill",
+                className: "gap-1.5",
+              })}
+            >
               {t("submitCta")} →
             </SubmitCTA>
             {showWechatCommunity ? (
