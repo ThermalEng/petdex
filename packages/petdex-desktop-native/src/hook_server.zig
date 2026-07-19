@@ -343,7 +343,7 @@ fn route(server: *Server, conn: std.c.fd_t, method: []const u8, path: []const u8
         const title = jsonString(body, "title") orelse "";
         const busy = std.mem.indexOf(u8, body, "\"busy\":true") != null;
         const counter = mailbox.setBubble(capped, agent[0..@min(agent.len, 24)], title[0..@min(title.len, 96)], busy);
-        mirrorBubble(server, capped, counter) catch {};
+        mirrorBubble(server, capped, counter, title[0..@min(title.len, 96)], agent[0..@min(agent.len, 24)], busy) catch {};
         const out = std.fmt.bufPrint(&scratch, "{{\"ok\":true,\"counter\":{d}}}", .{counter}) catch return;
         return respond(conn, 200, out);
     }
@@ -493,8 +493,8 @@ fn mirrorState(server: *Server, state: []const u8, counter: u64) !void {
     try writeRuntimeFile(server, "state.json", json, 0o644);
 }
 
-fn mirrorBubble(server: *Server, text: []const u8, counter: u64) !void {
-    var buf: [512]u8 = undefined;
-    const json = try std.fmt.bufPrint(&buf, "{{\"text\":\"{s}\",\"counter\":{d},\"at\":{d}}}", .{ text, counter, nowMs() });
+fn mirrorBubble(server: *Server, text: []const u8, counter: u64, title: []const u8, agent: []const u8, busy: bool) !void {
+    var buf: [1024]u8 = undefined;
+    const json = try std.fmt.bufPrint(&buf, "{{\"text\":\"{s}\",\"title\":\"{s}\",\"agent_source\":\"{s}\",\"busy\":{},\"counter\":{d},\"at\":{d}}}", .{ text, title, agent, busy, counter, nowMs() });
     try writeRuntimeFile(server, "bubble.json", json, 0o644);
 }
