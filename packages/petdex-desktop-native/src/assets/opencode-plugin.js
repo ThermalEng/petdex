@@ -7,8 +7,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const SIDECAR_URL = ${JSON.stringify(SIDECAR_URL)};
-const SIDECAR_BUBBLE_URL = ${JSON.stringify(sidecarBubbleUrl)};
+const SIDECAR_URL = "http://127.0.0.1:7777/state";
+const SIDECAR_BUBBLE_URL = "http://127.0.0.1:7777/bubble";
 const RUNTIME_DIR = join(homedir(), ".petdex", "runtime");
 const TOKEN_PATH = join(RUNTIME_DIR, "update-token");
 const KILLSWITCH_PATH = join(RUNTIME_DIR, "hooks-disabled");
