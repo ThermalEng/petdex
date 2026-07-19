@@ -18,6 +18,7 @@ extern "c" fn system(command: [*:0]const u8) c_int;
 const native_sdk = @import("native_sdk");
 const hook_server = @import("hook_server.zig");
 const hook_runner = @import("hook_runner.zig");
+const agent_hooks = @import("agent_hooks.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 
@@ -127,6 +128,7 @@ pub const Msg = union(enum) {
     open_pet_page: u32,
     appearance: native_sdk.platform.Appearance,
     toggle_bubbles,
+    install_agent: u32,
     noop,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
@@ -174,6 +176,14 @@ pub const Model = struct {
     bubbles_enabled: bool = true,
     pet_x: f64 = 0,
     pet_y: f64 = 0,
+    agents: [agent_hooks.agent_count]agent_hooks.AgentInfo = .{
+        .{ .kind = .claude_code },
+        .{ .kind = .codex },
+        .{ .kind = .gemini },
+        .{ .kind = .opencode },
+    },
+    agents_prompted: bool = false,
+    codex_trust_note: bool = false,
     dark: bool = true,
     high_contrast: bool = false,
     reduce_motion: bool = false,
@@ -458,7 +468,7 @@ fn saveSettings(model: *const Model) void {
     const path = settingsPath(&path_buf) orelse return;
     var buf: [256]u8 = undefined;
     const active = if (model.active_pet < catalog_len) catalog[model.active_pet].slice() else "";
-    const json = std.fmt.bufPrint(&buf, "{{\"active_pet\":\"{s}\",\"scale\":{d:.2},\"bubbles\":{}}}", .{ active, model.scale, model.bubbles_enabled }) catch return;
+    const json = std.fmt.bufPrint(&buf, "{{\"active_pet\":\"{s}\",\"scale\":{d:.2},\"bubbles\":{},\"agents_prompted\":{}}}", .{ active, model.scale, model.bubbles_enabled, model.agents_prompted }) catch return;
     cWriteFile(path, json);
 }
 
@@ -521,6 +531,7 @@ fn loadSheetForPet(entry: *const CatalogEntry) bool {
 var initial_scale: f32 = 0.7;
 var initial_pet: u32 = 0;
 var initial_bubbles: bool = true;
+var initial_agents_prompted: bool = false;
 
 // ------------------------------------------------------------- avatars
 // One slot for the CURRENT bubble's agent avatar (claude-code, codex,
@@ -675,6 +686,9 @@ fn loadSheetPixels(io: std.Io, allocator: std.mem.Allocator, environ_map: *std.p
             if (hook_server.jsonStringPub(json, "bubbles")) |_| {} else if (std.mem.indexOf(u8, json, "\"bubbles\":false") != null) {
                 initial_bubbles = false;
             }
+            if (std.mem.indexOf(u8, json, "\"agents_prompted\":true") != null) {
+                initial_agents_prompted = true;
+            }
         }
     }
     var index: usize = 0;
@@ -757,6 +771,8 @@ pub fn boot(model: *Model, fx: *Effects) void {
     if (sheet.pixels.len == 0) return;
     model.scale = initial_scale;
     model.bubbles_enabled = initial_bubbles;
+    model.agents_prompted = initial_agents_prompted;
+    if (env_home) |home| model.agents = agent_hooks.scan(boot_allocator, home);
     model.active_pet = initial_pet;
     registerStateFrames(model.state, fx);
     model.sheet_loaded = true;
@@ -824,7 +840,20 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .cycle_state => {
             applyState(model, model.state.next(), 0, fx);
         },
+        .install_agent => |index| {
+            if (index >= agent_hooks.agent_count) return;
+            const kind = model.agents[index].kind;
+            const home = env_home orelse return;
+            const ok = switch (kind) {
+                .claude_code => agent_hooks.installClaude(boot_allocator, home),
+                .codex => agent_hooks.installCodex(boot_allocator, home),
+                else => false,
+            };
+            if (ok and kind == .codex) model.codex_trust_note = true;
+            model.agents = agent_hooks.scan(boot_allocator, home);
+        },
         .open_settings => {
+            if (env_home) |home| model.agents = agent_hooks.scan(boot_allocator, home);
             if (model.settings_open) {
                 // Already open, likely buried behind other windows:
                 // raise it instead of rebuilding an identical
@@ -880,6 +909,19 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .frame_clock => {
             if (!model.sheet_loaded) return;
             if (!model.window_fitted) {
+                // First-run onboarding: open settings ONCE when no
+                // agent carries petdex hooks. Installing one - or just
+                // closing the window - both mean never auto-opening
+                // again (agents_prompted persists).
+                if (!model.agents_prompted) {
+                    var any_hooked = false;
+                    for (model.agents) |info| {
+                        if (info.status == .node or info.status == .current) any_hooked = true;
+                    }
+                    if (!any_hooked) model.settings_open = true;
+                    model.agents_prompted = true;
+                    saveSettings(model);
+                }
                 // The shell window boots at the slider's max extent;
                 // fit it to the drawn sprite so the whole window IS the
                 // pet — no invisible band above it eating clicks.
@@ -1222,7 +1264,6 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
 
     var card = ui.el(.panel, .{
         .padding = bubble_card_pad,
-        .style_tokens = .{ .radius = .md },
     }, .{
         ui.row(.{ .gap = 8, .cross = .center }, .{
             avatar,
@@ -1230,6 +1271,7 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
             spinner_slot,
         }),
     });
+    card.widget.style.radius = 18;
     if (model.dark) {
         card.widget.style.background = canvas.Color.rgb8(25, 25, 28);
         card.widget.style.border = canvas.Color.rgba8(255, 255, 255, 26);
@@ -1271,12 +1313,17 @@ fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []cons
         count += 1;
     }
     if (model.settings_open) {
+        var agent_rows: f32 = 0;
+        for (model.agents) |info| {
+            if (info.status != .absent) agent_rows += 1;
+        }
+        const agents_h: f32 = 46 + (if (agent_rows > 0) agent_rows * 58 else 60);
         scratch.windows[count] = .{
             .label = settings_window_label,
             .canvas_label = settings_canvas_label,
             .title = "Petdex Settings",
             .width = 420,
-            .height = 640,
+            .height = 640 + agents_h,
             .resizable = false,
             .on_close = .settings_closed,
         };
@@ -1289,6 +1336,56 @@ fn petdexWindowView(ui: *PetdexApp.Ui, model: *const Model, window_label: []cons
     if (std.mem.eql(u8, window_label, "bubble")) return bubbleView(ui, model);
     std.debug.assert(std.mem.eql(u8, window_label, settings_window_label));
     return settingsView(ui, model);
+}
+
+fn agentStatusCaption(info: agent_hooks.AgentInfo, codex_note: bool) []const u8 {
+    if (info.kind == .codex and codex_note) return "Installed - restart Codex and approve its hooks once";
+    return switch (info.status) {
+        .absent => "Not detected",
+        .none => "Hooks not installed",
+        .node => "Hooks outdated (CLI runner)",
+        .current => "Connected",
+    };
+}
+
+fn agentsSection(ui: *AppUi, model: *const Model) AppUi.Node {
+    var rows: [agent_hooks.agent_count]AppUi.Node = undefined;
+    var count: usize = 0;
+    for (model.agents, 0..) |info, i| {
+        if (info.status == .absent) continue;
+        const installable = info.kind == .claude_code or info.kind == .codex;
+        const trailing = if (info.status == .current)
+            ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .accent } }, "Connected")
+        else if (installable)
+            ui.button(.{
+                .size = .sm,
+                .variant = .primary,
+                .on_press = Msg{ .install_agent = @intCast(i) },
+            }, if (info.status == .node) "Update" else "Install")
+        else
+            ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "Via petdex CLI");
+        rows[count] = ui.el(.list_item, .{
+            .height = 52,
+            .padding = 8,
+            .gap = 12,
+            .cross = .center,
+            .style_tokens = .{ .background = .surface, .radius = .md },
+            .semantics = .{ .label = info.kind.displayName() },
+        }, .{
+            ui.column(.{ .grow = 1, .main = .center }, .{
+                ui.text(.{}, info.kind.displayName()),
+                ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, agentStatusCaption(info, model.codex_trust_note)),
+            }),
+            trailing,
+        });
+        count += 1;
+    }
+    if (count == 0) {
+        return ui.el(.panel, .{ .padding = 12, .style_tokens = .{ .background = .surface, .radius = .md } }, .{
+            ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } }, "No coding agents detected on this machine"),
+        });
+    }
+    return ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..count]));
 }
 
 fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
@@ -1343,6 +1440,8 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
     return ui.column(.{ .grow = 1, .padding = 16, .gap = 12 }, .{
         ui.text(.{ .size = .heading }, "Pets"),
         ui.scroll(.{ .height = list_h }, .{ui.column(.{ .gap = 6 }, @as([]const AppUi.Node, rows[0..shown]))}),
+        ui.text(.{ .size = .heading }, "Agents"),
+        agentsSection(ui, model),
         ui.text(.{ .size = .heading }, "Appearance"),
         ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
             ui.row(.{ .padding = 12, .cross = .center, .gap = 12 }, .{
