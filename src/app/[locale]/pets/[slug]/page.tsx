@@ -301,7 +301,7 @@ export default async function PetPage({ params }: PageProps) {
                     src={pet.spritesheetPath}
                     petName={pet.displayName}
                     size={180}
-                    initialFraction={{ x: 0.25, y: 0.3 }}
+                    initialFraction={{ x: 0.5, y: 0.5 }}
                   />
                 </span>
               </div>
@@ -446,7 +446,7 @@ export default async function PetPage({ params }: PageProps) {
         </div>
       </section>
 
-      <section className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-5 py-12 md:px-8 md:py-16">
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-5 py-10 md:gap-8 md:px-8 md:py-12">
         {/* Lets users on Windows / macOS who disabled animations in OS
             settings know the static sprite is intentional, not a bug.
             Reported via feedback on /zh/pets/nyami where the user
@@ -471,61 +471,71 @@ export default async function PetPage({ params }: PageProps) {
           <InstallCommandLazy slug={pet.slug} displayName={pet.displayName} />
         </div>
 
-        {/* Owner credit + claim CTA. Compact row that wraps cleanly on
-            small screens. */}
-        {ownerCredit ? (
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <SubmittedBy credit={ownerCredit} />
-            {ownerCreditResult?.ownerIsProxy ? (
-              <ClaimCTA
-                petName={pet.displayName}
-                authorLabel={ownerCredit.name}
-                githubUrl={
-                  ownerCredit.externals.find((e) => e.provider === "github")
-                    ?.url ?? null
-                }
-              />
-            ) : null}
-          </div>
-        ) : null}
-
-        {/* Stats + variants. Single column when no variants exist (so
-            the radar doesn't sit in a half-empty grid); 2-column when
-            variants are available. */}
+        {/* Credit + stats stack on the left, variants on the right so
+            the short cards share a column instead of each floating in
+            its own full-width band. Single column when no variants. */}
         <div
           className={
-            variants.length > 0 ? "grid gap-6 md:grid-cols-2" : "grid gap-6"
+            variants.length > 0
+              ? "grid items-start gap-6 md:grid-cols-2"
+              : "grid gap-6"
           }
         >
-          <InfoCard
-            title={tPet("stats.title")}
-            icon={<Sparkles className="size-4" />}
-          >
-            <div className="flex items-center justify-center py-2">
-              <PetRadarClient
-                slug={pet.slug}
-                importedAt={pet.importedAt}
-                ariaLabel={tPet("stats.ariaLabel")}
-                labels={{
-                  vibrance: tPet("stats.vibrance"),
-                  popularity: tPet("stats.popularity"),
-                  loved: tPet("stats.loved"),
-                  freshness: tPet("stats.freshness"),
-                }}
-              />
-            </div>
-          </InfoCard>
+          <div className="flex flex-col gap-6">
+            {ownerCredit ? (
+              <div className="flex flex-col gap-3">
+                <SubmittedBy credit={ownerCredit} />
+                {ownerCreditResult?.ownerIsProxy ? (
+                  <ClaimCTA
+                    petName={pet.displayName}
+                    authorLabel={ownerCredit.name}
+                    githubUrl={
+                      ownerCredit.externals.find((e) => e.provider === "github")
+                        ?.url ?? null
+                    }
+                  />
+                ) : null}
+              </div>
+            ) : (
+              <InfoCard
+                title="Submission"
+                icon={<Sparkles className="size-4" />}
+              >
+                <p>Curated entry.</p>
+                <p>Updated {new Date(pet.importedAt).toLocaleDateString()}</p>
+              </InfoCard>
+            )}
+
+            <InfoCard
+              title={tPet("stats.title")}
+              icon={<Sparkles className="size-4" />}
+            >
+              <div className="flex items-center justify-center">
+                <PetRadarClient
+                  slug={pet.slug}
+                  importedAt={pet.importedAt}
+                  ariaLabel={tPet("stats.ariaLabel")}
+                  labels={{
+                    vibrance: tPet("stats.vibrance"),
+                    popularity: tPet("stats.popularity"),
+                    loved: tPet("stats.loved"),
+                    freshness: tPet("stats.freshness"),
+                  }}
+                />
+              </div>
+            </InfoCard>
+          </div>
 
           {variants.length > 0 ? (
-            <section className="rounded-2xl border border-border-base bg-surface/60 p-5 backdrop-blur">
+            <section className="rounded-2xl border border-border-base bg-surface/60 p-4 backdrop-blur">
               <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Sparkles className="size-4" />
                 {tPet("variants.title")}
               </div>
-              <p className="mt-2 text-sm text-muted-2">
+              <p className="mt-1.5 text-[13px] text-muted-2">
                 {tPet("variants.description")}
               </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
                 {variants.map((variant) => (
                   <Link
                     key={variant.slug}
@@ -554,13 +564,6 @@ export default async function PetPage({ params }: PageProps) {
             </section>
           ) : null}
         </div>
-
-        {!ownerCredit ? (
-          <InfoCard title="Submission" icon={<Sparkles className="size-4" />}>
-            <p>Curated entry.</p>
-            <p>Updated {new Date(pet.importedAt).toLocaleDateString()}</p>
-          </InfoCard>
-        ) : null}
       </section>
 
       <SiteFooter />
@@ -603,12 +606,12 @@ function InfoCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-border-base bg-surface/60 p-5 backdrop-blur">
+    <div className="rounded-2xl border border-border-base bg-surface/60 p-4 backdrop-blur">
       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
         {icon}
         {title}
       </div>
-      <div className="mt-4 space-y-2 break-words text-sm leading-6 text-muted-2">
+      <div className="mt-3 space-y-2 break-words text-sm leading-6 text-muted-2">
         {children}
       </div>
     </div>

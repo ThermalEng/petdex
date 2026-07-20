@@ -25,7 +25,7 @@ export function PetStateViewer({ src, petName }: PetStateViewerProps) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(280px,420px)_1fr]">
-      <section className="rounded-2xl border border-border-base bg-surface/60 p-5 backdrop-blur">
+      <section className="rounded-2xl border border-border-base bg-surface/60 p-4 backdrop-blur">
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold tracking-[0.18em] text-brand uppercase">
@@ -41,7 +41,7 @@ export function PetStateViewer({ src, petName }: PetStateViewerProps) {
           </span>
         </div>
 
-        <div className="pet-checkerboard mt-6 flex min-h-80 items-center justify-center rounded-xl border border-border-base">
+        <div className="pet-checkerboard mt-4 flex min-h-64 items-center justify-center rounded-xl border border-border-base">
           <PetSprite
             src={src}
             state={activeState.id}
@@ -53,7 +53,7 @@ export function PetStateViewer({ src, petName }: PetStateViewerProps) {
           />
         </div>
 
-        <p className="mt-4 text-sm leading-6 text-muted-2">
+        <p className="mt-3 text-sm leading-6 text-muted-2">
           {t(`states.${activeState.id}.purpose`)}
         </p>
       </section>
