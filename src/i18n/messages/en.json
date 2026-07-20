@@ -127,7 +127,8 @@
       "title": "Featured collections worth installing",
       "viewAll": "View all",
       "petsCount": "{count, plural, =1 {1 pet} other {# pets}}"
-    }
+    },
+    "worksWith": "Works with"
   },
   "community": {
     "metadata": {

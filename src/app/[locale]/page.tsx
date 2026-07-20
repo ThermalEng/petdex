@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 import { ArrowRight } from "lucide-react";
@@ -162,6 +163,29 @@ export default async function Home({
                 brand: (chunks) => <strong>{chunks}</strong>,
               })}
             </p>
+            <div className="mt-4 flex items-center justify-center gap-3 text-xs text-muted-3">
+              <span>{t("worksWith")}</span>
+              <span className="flex items-center gap-2.5 opacity-80">
+                {(
+                  [
+                    ["claude-code", "Claude Code"],
+                    ["codex", "Codex"],
+                    ["gemini", "Gemini CLI"],
+                    ["opencode", "opencode"],
+                  ] as const
+                ).map(([slug, name]) => (
+                  <Image
+                    key={slug}
+                    src={`/brand/agents/${slug}.svg`}
+                    alt={name}
+                    title={name}
+                    width={16}
+                    height={16}
+                    className="size-4 dark:invert-0"
+                  />
+                ))}
+              </span>
+            </div>
             <div className="mt-5 flex w-full flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
               <CommandLine
                 command="npx petdex install boba"
@@ -187,13 +211,7 @@ export default async function Home({
           <HeroPetParade pets={heroPets} isZh={isZh} />
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted-3">
-            <SubmitCTA
-              className={buttonVariants({
-                variant: "petdex-secondary",
-                size: "petdex-pill",
-                className: "gap-1.5",
-              })}
-            >
+            <SubmitCTA variant="petdex-secondary" className="gap-1.5">
               {t("submitCta")} →
             </SubmitCTA>
             {showWechatCommunity ? (
@@ -351,7 +369,8 @@ async function HeroPetParade({ pets, isZh }: HeroPetParadeProps) {
             href={`/pets/${pet.slug}`}
             prefetch={false}
             aria-label={t("openPet", { name: pet.displayName })}
-            className={`group relative flex flex-col items-center rounded-2xl border border-border-base bg-surface/60 px-3 pt-3 pb-2 shadow-lg shadow-blue-900/10 backdrop-blur-md transition hover:-translate-y-1 hover:bg-surface ${tilt} ${lift}`}
+            style={{ "--deal-delay": `${index * 70}ms` } as React.CSSProperties}
+            className={`hero-card-deal group relative flex flex-col items-center rounded-2xl border border-border-base bg-surface/70 px-3 pt-3 pb-2 backdrop-blur-md transition hover:-translate-y-1 hover:border-brand/30 hover:bg-surface ${tilt} ${lift}`}
           >
             <PetSprite
               src={pet.spritesheetPath}

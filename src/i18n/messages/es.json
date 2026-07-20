@@ -127,7 +127,8 @@
       "title": "Colecciones destacadas para instalar",
       "viewAll": "Ver todas",
       "petsCount": "{count, plural, =1 {1 mascota} other {# mascotas}}"
-    }
+    },
+    "worksWith": "Funciona con"
   },
   "community": {
     "metadata": {

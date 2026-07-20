@@ -309,6 +309,31 @@ input {
     0 1px 2px rgb(0 0 0 / 0.4),
     0 3px 10px -5px rgb(0 0 0 / 0.5);
 }
+
+.btn-3d-inverse {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.22),
+    inset 0 -1px 0 rgb(0 0 0 / 0.3),
+    0 8px 24px -8px rgb(10 10 14 / 0.5);
+}
+
+/* Hero pet cards deal in like a hand of cards: rise, straighten and
+   fade, staggered per card via --deal-delay. */
+@keyframes petdex-deal {
+  from {
+    opacity: 0;
+    transform: translateY(22px) rotate(4deg) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotate(0) scale(1);
+  }
+}
+.hero-card-deal {
+  animation: petdex-deal 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--deal-delay, 0s);
+}
+
 .btn-3d-brand {
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.25),

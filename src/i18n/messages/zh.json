@@ -144,7 +144,8 @@
       "title": "值得安装的精选合集",
       "viewAll": "查看全部",
       "petsCount": "{count} 个宠物"
-    }
+    },
+    "worksWith": "支持"
   },
   "community": {
     "metadata": {

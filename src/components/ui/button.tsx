@@ -23,7 +23,7 @@ const buttonVariants = cva(
         "petdex-secondary":
           "rounded-full border border-border-base bg-surface/80 font-medium text-foreground shadow-none backdrop-blur transition hover:border-brand/30 hover:bg-brand/15 hover:text-brand",
         "petdex-inverse":
-          "btn-3d-brand rounded-full bg-inverse font-semibold text-on-inverse transition hover:bg-inverse-hover [--tw-shadow-color:transparent]",
+          "btn-3d-inverse rounded-full bg-inverse font-semibold text-on-inverse transition hover:bg-inverse-hover",
         "petdex-pill":
           "rounded-full border border-border-base bg-surface/70 text-muted-2 backdrop-blur hover:bg-surface hover:text-foreground aria-expanded:bg-surface aria-expanded:text-foreground data-popup-open:bg-surface data-popup-open:text-foreground",
       },

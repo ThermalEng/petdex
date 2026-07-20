@@ -163,7 +163,7 @@ function UserDropdown({ compact = false }: { compact?: boolean }) {
       <DropdownMenuContent
         align="end"
         sideOffset={8}
-        className="w-64 p-1.5 text-[13px]"
+        className="w-64 p-0 py-1 text-[13px] duration-150 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-open:slide-in-from-top-2"
       >
         {menuOpen ? (
           <UserDropdownContent
