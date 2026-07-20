@@ -170,11 +170,13 @@ export default async function Home({
               <DownloadDesktopCTA
                 href={`/${locale}/download`}
                 source="hero_primary"
-                className={buttonVariants({
-                  variant: "petdex-cta",
-                  size: "petdex-pill",
-                  className: "gap-1.5",
-                })}
+                className={cn(
+                  buttonVariants({
+                    variant: "petdex-cta",
+                    size: "petdex-pill",
+                    className: "gap-1.5",
+                  }),
+                )}
               >
                 {t("downloadCta")}
                 <ArrowRight className="size-3.5" />

@@ -311,10 +311,9 @@ input {
 }
 .btn-3d-brand {
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.32),
-    inset 0 -1.5px 0 rgb(20 20 80 / 0.4),
-    0 1px 2px rgb(30 35 120 / 0.35),
-    0 10px 28px -8px rgb(56 71 245 / 0.55);
+    inset 0 1px 0 rgb(255 255 255 / 0.25),
+    inset 0 -1px 0 rgb(20 20 80 / 0.25),
+    0 8px 24px -8px rgb(56 71 245 / 0.55);
 }
 .btn-3d-brand:active,
 .btn-3d:active {

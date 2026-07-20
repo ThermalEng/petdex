@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { cn } from "@/lib/utils";
+
 import { buttonVariants } from "@/components/ui/button";
 
 type SubmitLinkProps = {
@@ -9,15 +11,19 @@ type SubmitLinkProps = {
 };
 
 const variantClassName = {
-  desktop: buttonVariants({
-    variant: "petdex-cta",
-    size: "petdex-pill",
-    className: "hidden md:inline-flex",
-  }),
-  mobile: buttonVariants({
-    variant: "petdex-cta",
-    className: "mt-1 flex rounded-xl px-3 py-2.5 text-sm",
-  }),
+  desktop: cn(
+    buttonVariants({
+      variant: "petdex-cta",
+      size: "petdex-pill",
+      className: "hidden md:inline-flex",
+    }),
+  ),
+  mobile: cn(
+    buttonVariants({
+      variant: "petdex-cta",
+      className: "mt-1 flex rounded-xl px-3 py-2.5 text-sm",
+    }),
+  ),
 } as const;
 
 export function SubmitLink({ href, label, variant }: SubmitLinkProps) {
