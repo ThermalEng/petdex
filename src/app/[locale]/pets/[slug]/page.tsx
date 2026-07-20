@@ -243,7 +243,7 @@ export default async function PetPage({ params }: PageProps) {
           left, identity + CTAs on the right. Mobile collapses to a
           natural vertical stack: dex nav, sprite, info+CTAs. */}
       <section className="petdex-hero relative -mt-14 overflow-visible pt-14">
-        <div className="relative mx-auto flex w-full max-w-6xl flex-col gap-4 px-5 pb-8 md:gap-6 md:px-8 md:pb-14">
+        <div className="relative mx-auto flex w-full max-w-6xl flex-col gap-4 px-5 pt-5 pb-8 md:gap-6 md:px-8 md:pt-8 md:pb-14">
           {/* Dex nav strip — Pokédex chrome at the top. */}
           <nav
             aria-label={tPet("navigation.ariaLabel")}
@@ -352,30 +352,40 @@ export default async function PetPage({ params }: PageProps) {
                 displayName={pet.displayName}
               />
 
-              {/* Quick actions row + stats. */}
-              <div className="flex flex-wrap items-center gap-3 pt-1">
-                <LikeButton slug={pet.slug} />
-                {pet.soundUrl ? (
-                  <PetSoundButton
-                    soundUrl={pet.soundUrl}
-                    displayName={pet.displayName}
-                    labelPrefix="Play signature sound for"
+              {/* Quick actions row: like / sound / share / sticker share
+                  one pill rung. Passive meta (counters) and the rare
+                  action (report) live on a quieter second line so the
+                  row reads as four choices, not seven. */}
+              <div className="flex flex-col gap-2.5 pt-1">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <LikeButton slug={pet.slug} />
+                  {pet.soundUrl ? (
+                    <PetSoundButton
+                      soundUrl={pet.soundUrl}
+                      displayName={pet.displayName}
+                      labelPrefix="Play signature sound for"
+                    />
+                  ) : null}
+                  <PetActionMenu
+                    pet={{
+                      slug: pet.slug,
+                      displayName: pet.displayName,
+                      zipUrl: pet.zipUrl,
+                      description: pet.description,
+                    }}
+                    variant="detail"
                   />
-                ) : null}
-                <PetActionMenu
-                  pet={{
-                    slug: pet.slug,
-                    displayName: pet.displayName,
-                    zipUrl: pet.zipUrl,
-                    description: pet.description,
-                  }}
-                  variant="detail"
-                />
-                <SaveAsSticker slug={pet.slug} displayName={pet.displayName} />
-                <PetTakedownReportButton
-                  pet={{ slug: pet.slug, displayName: pet.displayName }}
-                />
-                <PetCountersBar slug={pet.slug} />
+                  <SaveAsSticker
+                    slug={pet.slug}
+                    displayName={pet.displayName}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <PetCountersBar slug={pet.slug} />
+                  <PetTakedownReportButton
+                    pet={{ slug: pet.slug, displayName: pet.displayName }}
+                  />
+                </div>
               </div>
 
               {/* Tags + collections collapsed into compact metadata. */}
@@ -507,7 +517,7 @@ export default async function PetPage({ params }: PageProps) {
           </InfoCard>
 
           {variants.length > 0 ? (
-            <section className="rounded-2xl border border-border-base bg-surface/76 p-5 shadow-sm shadow-blue-950/5 backdrop-blur">
+            <section className="rounded-2xl border border-border-base bg-surface/60 p-5 backdrop-blur">
               <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Sparkles className="size-4" />
                 {tPet("variants.title")}
@@ -571,13 +581,13 @@ function DexNavPill({
     <Link
       href={`/pets/${pet.slug}`}
       prefetch={false}
-      className={`inline-flex min-h-10 items-center gap-2 rounded-full border border-border-base bg-surface px-4 py-2 text-sm text-foreground transition hover:border-border-strong ${direction === "next" ? "ml-auto" : ""}`}
+      className={`inline-flex h-9 items-center gap-2 rounded-full border border-border-base bg-surface/70 px-3.5 text-[13px] font-medium text-muted-2 backdrop-blur transition hover:bg-surface-muted hover:text-foreground ${direction === "next" ? "ml-auto" : ""}`}
     >
       {direction === "prev" ? <span aria-hidden="true">←</span> : null}
-      <span className="font-mono text-xs tracking-[0.16em]">
+      <span className="font-mono text-[11px] tracking-[0.16em] text-muted-3">
         #{formatDexNumber(pet.dexNumber)}
       </span>
-      <span className="font-normal">{pet.displayName}</span>
+      <span>{pet.displayName}</span>
       {direction === "next" ? <span aria-hidden="true">→</span> : null}
     </Link>
   );
@@ -593,7 +603,7 @@ function InfoCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-border-base bg-surface/76 p-5 shadow-sm shadow-blue-950/5 backdrop-blur">
+    <div className="rounded-2xl border border-border-base bg-surface/60 p-5 backdrop-blur">
       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
         {icon}
         {title}
