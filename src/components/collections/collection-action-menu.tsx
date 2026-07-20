@@ -134,7 +134,7 @@ export function CollectionActionMenu({ collection }: Props) {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="inline-flex size-8 items-center justify-center rounded-full border border-border-base bg-surface/90 text-muted-2 transition hover:border-border-strong hover:text-foreground"
+        className="inline-flex size-8 items-center justify-center rounded-full border border-border-base bg-surface/70 text-muted-2 backdrop-blur transition hover:bg-surface-muted hover:text-foreground"
       >
         <MoreHorizontal className="size-4" />
       </button>
@@ -142,7 +142,7 @@ export function CollectionActionMenu({ collection }: Props) {
       {open ? (
         <div
           role="menu"
-          className="absolute top-full right-0 z-[60] mt-2 w-72 overflow-hidden rounded-2xl border border-border-base bg-surface shadow-xl shadow-blue-950/15"
+          className="absolute top-full right-0 z-[60] mt-2 w-72 origin-top-right animate-in overflow-hidden rounded-2xl border border-border-base bg-surface text-[13px] shadow-xl shadow-blue-950/15 duration-150 fade-in-0 zoom-in-95 slide-in-from-top-1"
         >
           <div className="flex items-center justify-between border-b border-black/[0.06] px-3 py-2 dark:border-white/[0.06]">
             <span className="inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.18em] text-muted-3 uppercase">

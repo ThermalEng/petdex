@@ -281,7 +281,12 @@ async function FeaturedCollections({
         </div>
         <Link
           href="/collections"
-          className="inline-flex h-10 items-center rounded-full border border-border-base bg-surface px-4 text-sm font-medium text-muted-2 transition hover:border-border-strong"
+          className={cn(
+            buttonVariants({
+              variant: "petdex-secondary",
+              size: "petdex-pill",
+            }),
+          )}
         >
           {t("viewAll")}
         </Link>
@@ -296,7 +301,7 @@ async function FeaturedCollections({
           return (
             <Card
               key={collection.slug}
-              className="group relative flex h-full flex-col gap-0 overflow-hidden rounded-3xl border border-border-base bg-surface/80 py-0 ring-0 transition hover:border-border-strong hover:shadow-xl hover:shadow-blue-950/10 has-[[aria-expanded=true]]:z-30"
+              className="group relative flex h-full flex-col gap-0 overflow-hidden rounded-2xl border border-border-base bg-surface/70 py-0 ring-0 backdrop-blur transition hover:border-brand/30 hover:bg-surface has-[[aria-expanded=true]]:z-30"
             >
               <Link
                 href={`/collections/${collection.slug}`}
