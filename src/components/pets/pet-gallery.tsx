@@ -378,7 +378,11 @@ export function PetGallery({
               <span className="text-muted-3">Sort:</span>
               <span className="text-foreground">{SORT_LABELS[sort]}</span>
             </SelectTrigger>
-            <SelectContent align="end">
+            <SelectContent
+              alignItemWithTrigger={false}
+              sideOffset={6}
+              align="end"
+            >
               {(Object.entries(SORT_LABELS) as [SortKey, string][]).map(
                 ([key, label]) => (
                   <SelectItem key={key} value={key}>
@@ -529,7 +533,8 @@ export function PetGallery({
           </div>
         ) : null}
         <div
-          className={`mt-3 flex-col gap-3 border-t border-black/[0.05] pt-3 duration-200 animate-in fade-in-0 slide-in-from-top-1 md:flex dark:border-white/[0.05] ${filtersOpen ? "hidden md:flex" : "hidden md:hidden"}`}
+          key={filtersOpen ? "open" : "closed"}
+          className={`mt-3 flex-col gap-3 border-t border-black/[0.05] pt-3 duration-200 animate-in fade-in-0 slide-in-from-top-1 dark:border-white/[0.05] ${filtersOpen ? "hidden md:flex" : "hidden"}`}
         >
           <FilterRow label="Type">
             <FilterChips
