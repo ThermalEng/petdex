@@ -25,6 +25,7 @@ import { CodexLogo } from "@/components/download/codex-logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -114,10 +115,12 @@ export function CollectionActionMenu({ collection }: Props) {
           <MoreHorizontal className="size-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" sideOffset={8} className="w-72 p-0">
-          <DropdownMenuLabel className="flex items-center gap-1.5 border-b border-foreground/[0.06] px-3 py-2 font-mono text-[10px] tracking-[0.18em] text-muted-3 uppercase">
-            <Layers className="size-3" />
-            {collection.title}
-          </DropdownMenuLabel>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="flex items-center gap-1.5 border-b border-foreground/[0.06] px-3 py-2 font-mono text-[10px] tracking-[0.18em] text-muted-3 uppercase">
+              <Layers className="size-3" />
+              {collection.title}
+            </DropdownMenuLabel>
+          </DropdownMenuGroup>
           {slugs.length > 0 && isMac ? (
             <DropdownMenuItem
               render={
