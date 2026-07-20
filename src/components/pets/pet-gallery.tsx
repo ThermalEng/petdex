@@ -310,9 +310,9 @@ export function PetGallery({
  to the right, filter chips wrap below. The whole surface gets the
  same subtle elevation as the announcement modal so it reads as a
  single primary action region. */}
-      <div className="rounded-3xl border border-black/[0.06] bg-surface p-3 shadow-[0_8px_24px_-12px_rgba(56,71,245,0.18)] md:p-4 dark:border-white/[0.06]">
+      <div className="rounded-2xl border border-border-base bg-surface/70 p-3 backdrop-blur md:p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <InputGroup className="h-11 flex-1 rounded-full bg-background/40">
+          <InputGroup className="h-10 flex-1 rounded-full border-border-base bg-background/40">
             <InputGroupAddon align="inline-start">
               <Search className="size-4 text-muted-3" />
             </InputGroupAddon>
@@ -321,7 +321,7 @@ export function PetGallery({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("searchPlaceholder")}
               aria-label={t("searchAria")}
-              className="text-sm placeholder:text-muted-3"
+              className="text-[13px] placeholder:text-muted-3"
             />
             {query.length > 0 ? (
               <InputGroupAddon align="inline-end">
@@ -346,7 +346,7 @@ export function PetGallery({
           >
             <SelectTrigger
               aria-label={t("sortAria")}
-              className="w-full shrink-0 sm:w-auto sm:min-w-[180px]"
+              className="h-10 w-full shrink-0 rounded-full border-border-base bg-surface/70 text-[13px] backdrop-blur hover:bg-surface-muted sm:w-auto sm:min-w-[180px]"
             >
               <span className="text-muted-3">Sort:</span>
               <span className="text-foreground">{SORT_LABELS[sort]}</span>
@@ -610,12 +610,12 @@ function FilterChips({
         const isActive = active.has(value);
         const dotClass =
           tone === "kind"
-            ? "bg-[#0a0a0a]/70 group-aria-pressed/toggle:bg-on-inverse/70"
+            ? "bg-foreground/60"
             : tone === "vibe"
-              ? "bg-brand group-aria-pressed/toggle:bg-on-inverse"
+              ? "bg-brand"
               : tone === "color"
                 ? ""
-                : "bg-sky-500 group-aria-pressed/toggle:bg-on-inverse";
+                : "bg-sky-500";
         const dotColor = dotColors?.[value];
         const label = labels?.[value] ?? value;
         return (
@@ -634,7 +634,7 @@ function FilterChips({
               style={dotColor ? { backgroundColor: dotColor } : undefined}
             />
             <span>{label}</span>
-            <span className="font-mono text-[9px] text-muted-3 group-aria-pressed/toggle:text-on-inverse/60">
+            <span className="font-mono text-[9px] text-muted-3 group-aria-pressed/toggle:text-brand/70">
               {count}
             </span>
           </Toggle>
