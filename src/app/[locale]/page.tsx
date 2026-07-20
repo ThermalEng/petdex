@@ -181,7 +181,7 @@ export default async function Home({
                     title={name}
                     width={16}
                     height={16}
-                    className="size-4 dark:invert-0"
+                    className="size-4 object-contain"
                   />
                 ))}
               </span>

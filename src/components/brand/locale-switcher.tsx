@@ -93,7 +93,7 @@ function LocaleSwitcherInner() {
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="z-[70] min-w-40 gap-0 overflow-hidden rounded-2xl border border-border-base bg-surface p-0 shadow-xl shadow-blue-950/15 duration-150 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-open:slide-in-from-top-2"
+        className="z-[70] min-w-40 gap-0 overflow-hidden rounded-2xl border border-border-base bg-surface p-0 shadow-xl shadow-blue-950/15 origin-(--transform-origin) transition-[opacity,transform] duration-150 ease-out data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
       >
         {OPTIONS.map((option) => (
           <button
