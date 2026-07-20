@@ -314,16 +314,16 @@ async function FeaturedCollections({
                   max={5}
                   scale={0.5}
                 />
-                <CardContent className="flex flex-1 flex-col p-5">
+                <CardContent className="flex flex-1 flex-col p-4">
                   <div className="flex items-center justify-between gap-3">
-                    <CardTitle className="truncate text-lg font-semibold tracking-tight text-foreground">
+                    <CardTitle className="truncate text-[15px] font-semibold tracking-tight text-foreground">
                       {collection.title}
                     </CardTitle>
                     <span className="shrink-0 font-mono text-[10px] tracking-[0.18em] text-muted-3 uppercase">
                       {t("petsCount", { count: collection.pets.length })}
                     </span>
                   </div>
-                  <CardDescription className="mt-2 line-clamp-2 text-sm leading-6 text-muted-2">
+                  <CardDescription className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-2">
                     {collection.description}
                   </CardDescription>
                 </CardContent>
