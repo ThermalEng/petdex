@@ -111,7 +111,7 @@ export function SaveAsSticker({ slug, displayName }: Props) {
 
   const ctaClasses = isZh
     ? "bg-[#07C160] hover:bg-[#06ae56] dark:bg-[#0a7d4d] dark:hover:bg-[#0c8c57]"
-    : "bg-[#25D366] hover:bg-[#1EBE5D] dark:bg-[#168649] dark:hover:bg-[#1c9a55]";
+    : "border border-border-base bg-surface/70 !text-foreground backdrop-blur hover:bg-surface-muted";
 
   return (
     <div className="relative inline-block">
@@ -121,12 +121,12 @@ export function SaveAsSticker({ slug, displayName }: Props) {
             <button
               type="button"
               aria-label={displayName}
-              className={`inline-flex h-10 items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-white shadow-sm transition focus-visible:outline-2 focus-visible:outline-offset-2 ${ctaClasses}`}
+              className={`inline-flex h-9 items-center justify-center gap-2 rounded-full px-3.5 text-[13px] font-medium text-white transition focus-visible:outline-2 focus-visible:outline-offset-2 ${ctaClasses}`}
             />
           }
         >
           {isZh ? (
-            <WeChatIcon className="w-4 h-4 text-white" />
+            <WeChatIcon className="w-4 h-4 text-[#25D366]" />
           ) : (
             <WhatsAppIcon className="w-4 h-4 text-white" />
           )}

@@ -242,7 +242,7 @@ export default async function PetPage({ params }: PageProps) {
           Two-column lockup on lg+: animated sprite (the product) on the
           left, identity + CTAs on the right. Mobile collapses to a
           natural vertical stack: dex nav, sprite, info+CTAs. */}
-      <section className="petdex-cloud relative -mt-[84px] overflow-visible pt-[84px]">
+      <section className="petdex-hero relative -mt-14 overflow-visible pt-14">
         <div className="relative mx-auto flex w-full max-w-6xl flex-col gap-4 px-5 pb-8 md:gap-6 md:px-8 md:pb-14">
           {/* Dex nav strip — Pokédex chrome at the top. */}
           <nav
@@ -253,7 +253,7 @@ export default async function PetPage({ params }: PageProps) {
             <Link
               href={shuffleHref}
               prefetch={false}
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-border-base bg-surface/80 px-4 text-sm font-medium text-foreground backdrop-blur transition hover:border-border-strong"
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border-base bg-surface/70 px-3.5 text-[13px] font-medium text-muted-2 backdrop-blur transition hover:bg-surface-muted hover:text-foreground"
               title={tPet("navigation.shuffleTitle")}
             >
               <Shuffle className="size-4" />
@@ -281,7 +281,7 @@ export default async function PetPage({ params }: PageProps) {
                 Sticky on lg+ so it stays visible while the right
                 column scrolls. */}
             <div className="lg:sticky lg:top-24">
-              <div className="petdex-floater-stage relative h-56 w-full overflow-hidden rounded-3xl sm:h-72 lg:aspect-square lg:h-auto">
+              <div className="petdex-floater-stage pet-sprite-stage relative h-56 w-full overflow-hidden rounded-2xl border border-border-base bg-surface/40 backdrop-blur sm:h-72 lg:aspect-square lg:h-auto">
                 {/* Static fallback for mobile + first paint. Anchored
                     upper-left so the pet reads like a peeking
                     character, not a centered specimen photo. Hidden
@@ -384,7 +384,7 @@ export default async function PetPage({ params }: PageProps) {
                   {pet.tags.map((tag) => (
                     <span
                       key={tag}
-                      className="rounded-full bg-brand-tint px-2.5 py-1 text-xs font-medium text-brand dark:bg-brand-tint-dark"
+                      className="rounded-full border border-border-base bg-surface/70 px-2.5 py-1 text-[12px] font-medium text-muted-2 backdrop-blur"
                     >
                       {tag}
                     </span>
@@ -403,7 +403,7 @@ export default async function PetPage({ params }: PageProps) {
                       key={col.slug}
                       href={`/collections/${col.slug}`}
                       prefetch={false}
-                      className="rounded-full border border-border-base bg-surface px-2.5 py-1 text-xs font-medium text-muted-2 transition hover:border-border-strong hover:text-foreground"
+                      className="rounded-full border border-border-base bg-surface/70 px-2.5 py-1 text-[12px] font-medium text-muted-2 backdrop-blur transition hover:bg-brand/15 hover:text-brand"
                     >
                       {col.title}
                     </Link>
