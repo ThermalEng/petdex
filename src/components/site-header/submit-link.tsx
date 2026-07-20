@@ -13,14 +13,14 @@ type SubmitLinkProps = {
 const variantClassName = {
   desktop: cn(
     buttonVariants({
-      variant: "petdex-cta",
+      variant: "petdex-inverse",
       size: "petdex-pill",
       className: "hidden md:inline-flex",
     }),
   ),
   mobile: cn(
     buttonVariants({
-      variant: "petdex-cta",
+      variant: "petdex-inverse",
       className: "mt-1 flex rounded-xl px-3 py-2.5 text-sm",
     }),
   ),
