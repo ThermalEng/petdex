@@ -118,8 +118,8 @@ export function SurprisePetCard({ initialPet = null }: SurprisePetCardProps) {
         <Link
           href={petHref}
           className={cn(
-            buttonVariants({ variant: "petdex-inverse" }),
-            "h-10 gap-1.5 px-3 text-xs",
+            buttonVariants({ variant: "petdex-inverse", size: "petdex-pill" }),
+            "gap-1.5 px-3",
           )}
         >
           <ExternalLink className="size-3.5" />
@@ -128,8 +128,11 @@ export function SurprisePetCard({ initialPet = null }: SurprisePetCardProps) {
         <Link
           href={installHref}
           className={cn(
-            buttonVariants({ variant: "petdex-secondary" }),
-            "h-10 gap-1.5 px-3 text-xs",
+            buttonVariants({
+              variant: "petdex-secondary",
+              size: "petdex-pill",
+            }),
+            "gap-1.5 px-3",
           )}
         >
           <PackageOpen className="size-3.5" />
@@ -140,8 +143,11 @@ export function SurprisePetCard({ initialPet = null }: SurprisePetCardProps) {
           onClick={() => void loadPet()}
           disabled={loading}
           className={cn(
-            buttonVariants({ variant: "petdex-secondary" }),
-            "h-10 gap-1.5 px-3 text-xs disabled:cursor-wait disabled:opacity-60",
+            buttonVariants({
+              variant: "petdex-secondary",
+              size: "petdex-pill",
+            }),
+            "gap-1.5 px-3 disabled:cursor-wait disabled:opacity-60",
           )}
         >
           <Dice5 className="size-3.5" />

@@ -30,7 +30,7 @@ export function LocaleSwitcher() {
   return (
     <Suspense
       fallback={
-        <span className="grid size-10 place-items-center rounded-full border border-border-base bg-surface/70 text-muted-2">
+        <span className="grid size-8 place-items-center rounded-full border border-border-base bg-surface/70 text-muted-2">
           <Globe className="size-4" />
         </span>
       }
