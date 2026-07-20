@@ -85,7 +85,7 @@ export function InstallCommand({ slug, displayName }: InstallCommandProps) {
   const shellLabel = isWin ? "PowerShell" : "Curl";
 
   return (
-    <div className="rounded-2xl border border-border-base bg-surface/80 p-5 shadow-sm shadow-blue-950/5 backdrop-blur">
+    <div className="rounded-2xl border border-border-base bg-surface/60 p-5 backdrop-blur">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Terminal className="size-4" />

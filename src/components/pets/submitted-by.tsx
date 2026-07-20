@@ -57,7 +57,7 @@ export function SubmittedBy({ credit }: SubmittedByProps) {
   // gets the visual hover treatment but no click handler — every
   // interactive surface is its own focusable child element.
   return (
-    <div className="group rounded-2xl border border-border-base bg-surface/76 p-4 backdrop-blur transition hover:border-border-strong hover:bg-surface">
+    <div className="group rounded-2xl border border-border-base bg-surface/60 p-4 backdrop-blur transition hover:bg-surface-muted/60">
       <Link
         href={profileHref}
         prefetch={false}
