@@ -10,7 +10,16 @@ import {
   useState,
 } from "react";
 
-import { Check, Loader2, Plus, Search, Sparkles, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Loader2,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 
 import { COLOR_FAMILIES, type ColorFamily } from "@/lib/color-families";
@@ -124,6 +133,7 @@ export function PetGallery({
   const [activeBatches, setActiveBatches] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortKey>("installed");
   const [sortTouched, setSortTouched] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const caughtSet = new Set(caughtSlugs ?? []);
 
   const [pets, setPets] = useState<SearchPet[]>(initial.pets);
@@ -310,7 +320,7 @@ export function PetGallery({
  to the right, filter chips wrap below. The whole surface gets the
  same subtle elevation as the announcement modal so it reads as a
  single primary action region. */}
-      <div className="rounded-2xl border border-border-base bg-surface/70 p-3 backdrop-blur md:p-4">
+      <div className="sticky top-16 z-30 rounded-2xl border border-border-base bg-background/85 p-3 backdrop-blur-md md:p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <InputGroup className="h-10 flex-1 rounded-full border-border-base bg-background/40">
             <InputGroupAddon align="inline-start">
@@ -337,6 +347,23 @@ export function PetGallery({
             ) : null}
           </InputGroup>
 
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((v) => !v)}
+            aria-expanded={filtersOpen}
+            className="hidden h-10 shrink-0 items-center gap-1.5 rounded-full border border-border-base bg-surface/70 px-4 text-[13px] font-medium text-muted-2 backdrop-blur transition hover:bg-surface-muted hover:text-foreground aria-expanded:border-brand/40 aria-expanded:bg-brand/15 aria-expanded:text-brand md:inline-flex"
+          >
+            <SlidersHorizontal className="size-3.5" />
+            Filters
+            {activeFilterCount > 0 ? (
+              <span className="grid size-4.5 place-items-center rounded-full bg-brand font-mono text-[9px] font-semibold text-white">
+                {activeFilterCount}
+              </span>
+            ) : null}
+            <ChevronDown
+              className={`size-3.5 transition-transform duration-200 ${filtersOpen ? "rotate-180" : ""}`}
+            />
+          </button>
           <Select
             value={sort}
             onValueChange={(next) => {
@@ -463,7 +490,47 @@ export function PetGallery({
         {/* Desktop: filters grouped by category with Type · Vibe · Color
  · Era separators. Eyebrow labels mark each cluster for scan-
  ability without losing the wrap-row density. */}
-        <div className="mt-3 hidden flex-col gap-3 border-t border-black/[0.05] pt-3 md:flex dark:border-white/[0.05]">
+        {!filtersOpen && activeFilterCount > 0 ? (
+          <div className="mt-3 hidden flex-wrap items-center gap-1.5 md:flex">
+            <FilterChips
+              options={[...activeKinds]}
+              counts={facets.kinds}
+              active={activeKinds}
+              onToggle={(v) => toggleKind(v as PetKind)}
+              tone="kind"
+            />
+            <FilterChips
+              options={[...activeVibes]}
+              counts={facets.vibes}
+              active={activeVibes}
+              onToggle={(v) => toggleVibe(v as PetVibe)}
+              tone="vibe"
+            />
+            <FilterChips
+              options={[...activeColors]}
+              counts={facets.colors}
+              active={activeColors}
+              onToggle={(v) => toggleColor(v as ColorFamily)}
+              tone="color"
+              dotColors={FAMILY_DOT}
+            />
+            <FilterChips
+              options={[...activeBatches]}
+              counts={Object.fromEntries(
+                facets.batches.map((batch) => [batch.key, batch.count]),
+              )}
+              labels={Object.fromEntries(
+                facets.batches.map((batch) => [batch.key, batch.label]),
+              )}
+              active={activeBatches}
+              onToggle={toggleBatch}
+              tone="batch"
+            />
+          </div>
+        ) : null}
+        <div
+          className={`mt-3 flex-col gap-3 border-t border-black/[0.05] pt-3 duration-200 animate-in fade-in-0 slide-in-from-top-1 md:flex dark:border-white/[0.05] ${filtersOpen ? "hidden md:flex" : "hidden md:hidden"}`}
+        >
           <FilterRow label="Type">
             <FilterChips
               options={PET_KINDS}
@@ -471,6 +538,7 @@ export function PetGallery({
               active={activeKinds}
               onToggle={(v) => toggleKind(v as PetKind)}
               tone="kind"
+              max={8}
             />
             <span aria-hidden className="px-1 text-muted-4">
               ·
@@ -481,6 +549,7 @@ export function PetGallery({
               active={activeVibes}
               onToggle={(v) => toggleVibe(v as PetVibe)}
               tone="vibe"
+              max={8}
             />
           </FilterRow>
           <FilterRow label="Color">
@@ -491,6 +560,7 @@ export function PetGallery({
               onToggle={(v) => toggleColor(v as ColorFamily)}
               tone="color"
               dotColors={FAMILY_DOT}
+              max={8}
             />
           </FilterRow>
           {facets.batches.length > 0 ? (
@@ -590,6 +660,7 @@ type FilterChipsProps = {
   active: Set<string>;
   onToggle: (value: string) => void;
   tone: "kind" | "vibe" | "color" | "batch";
+  max?: number;
   dotColors?: Partial<Record<string, string>>;
 };
 
@@ -601,10 +672,23 @@ function FilterChips({
   onToggle,
   tone,
   dotColors,
+  max,
 }: FilterChipsProps) {
+  const [expanded, setExpanded] = useState(false);
+  const withCounts = options.filter((value) => (counts[value] ?? 0) > 0);
+  // Count-descending: the facets people actually use come first, but
+  // an ACTIVE chip is never hidden behind the fold.
+  const sorted = [...withCounts].sort(
+    (a, b) =>
+      Number(active.has(b)) - Number(active.has(a)) ||
+      (counts[b] ?? 0) - (counts[a] ?? 0),
+  );
+  const limit = max && !expanded ? max : sorted.length;
+  const visible = sorted.slice(0, limit);
+  const hidden = sorted.length - visible.length;
   return (
     <>
-      {options.map((value) => {
+      {visible.map((value) => {
         const count = counts[value] ?? 0;
         if (count === 0) return null;
         const isActive = active.has(value);
@@ -640,6 +724,15 @@ function FilterChips({
           </Toggle>
         );
       })}
+      {hidden > 0 ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="inline-flex h-7 items-center rounded-full px-2 font-mono text-[10px] text-muted-3 transition hover:text-foreground"
+        >
+          +{hidden} more
+        </button>
+      ) : null}
     </>
   );
 }
