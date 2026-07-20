@@ -24,6 +24,7 @@ export function SubmitCTA({
       variant={variant}
       size="petdex-pill"
       className={className}
+      nativeButton={false}
       render={<Link href={href} prefetch={false} />}
     >
       {children}
