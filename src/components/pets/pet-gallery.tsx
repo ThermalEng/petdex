@@ -894,9 +894,6 @@ function PetCardImpl({
   const href = `/pets/${pet.slug}`;
   const formattedInstallCount = formatLocalizedNumber(installCount, locale);
   const previewSrc = petPreviewUrlForSource(pet.slug, pet.spritesheetPath);
-  const batchLabel = pet.approvedAt
-    ? formatBatchLabel(getBatchKey(new Date(pet.approvedAt)))
-    : null;
   const usesProfilePinHover = actionMode === "profilePinHover";
   // Every card with a dominantColor gets the same accent treatment.
   // Featured cards keep the same look + add a brand badge in the corner
@@ -917,39 +914,16 @@ function PetCardImpl({
     <article
       data-slot="card"
       style={accentStyle}
-      className="group relative flex h-full flex-col overflow-hidden rounded-3xl border border-black/10 bg-surface/76 shadow-sm shadow-blue-950/5 backdrop-blur transition has-[[aria-expanded=true]]:z-30 has-[[aria-expanded=true]]:-translate-y-0.5 has-[[aria-expanded=true]]:bg-white has-[[aria-expanded=true]]:shadow-xl has-[[aria-expanded=true]]:shadow-blue-950/10 hover:-translate-y-0.5 hover:bg-white hover:shadow-xl hover:shadow-blue-950/10 dark:border-white/10 dark:has-[[aria-expanded=true]]:bg-stone-800 dark:hover:bg-stone-800"
+      className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-border-base bg-surface/70 backdrop-blur transition has-[[aria-expanded=true]]:z-30 has-[[aria-expanded=true]]:border-brand/30 has-[[aria-expanded=true]]:bg-surface hover:-translate-y-0.5 hover:border-brand/30 hover:bg-surface"
     >
-      {/* Inset accent tab — short bar floating inside the card near the top,
-          centered horizontally, like the colored tab on a tab folder or a
-          file divider. Same treatment for featured & non-featured; the
-          featured badge in the top-right does the special-case signaling. */}
-      <div
-        aria-hidden
-        className={`pointer-events-none absolute top-3 left-1/2 h-[3px] w-24 -translate-x-1/2 rounded-full transition-opacity ${
-          pet.dominantColor ? "opacity-80 group-hover:opacity-100" : "opacity-0"
-        }`}
-        style={
-          pet.dominantColor
-            ? { backgroundColor: "var(--pet-accent)" }
-            : undefined
-        }
-      />
       <Link
         href={href}
         prefetch={false}
         aria-label={`Open ${pet.displayName}`}
         className="flex flex-1 flex-col rounded-3xl"
       >
-        <div className="flex items-center justify-between rounded-t-3xl border-b border-black/[0.06] px-5 pt-4 pr-5 pb-3 dark:border-white/[0.06]">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[11px] tracking-[0.22em] text-muted-3 uppercase">
-              No. {dexLabel}
-            </span>
-          </div>
-        </div>
-
         <div
-          className="pet-sprite-stage relative flex items-center justify-center overflow-hidden px-5 py-6"
+          className="pet-sprite-stage relative flex items-center justify-center overflow-hidden px-5 py-7"
           style={
             pet.dominantColor
               ? {
@@ -962,6 +936,9 @@ function PetCardImpl({
               : undefined
           }
         >
+          <span className="pointer-events-none absolute top-2.5 left-3.5 font-mono text-[9px] tracking-[0.2em] text-muted-4 uppercase">
+            No. {dexLabel}
+          </span>
           <PetSprite
             src={previewSrc ?? pet.spritesheetPath}
             layout={previewSrc ? "row" : "atlas"}
@@ -995,17 +972,18 @@ function PetCardImpl({
                 />
               ))
             : null}
-          {installCount > 0 ? (
-            <span className="pointer-events-none absolute right-5 bottom-2 font-mono text-[10px] tracking-[0.22em] text-muted-4 uppercase">
-              {formattedInstallCount} install
-              {installCount === 1 ? "" : "s"}
-            </span>
-          ) : null}
         </div>
 
-        <div className="flex flex-1 flex-col gap-2 border-t border-black/[0.06] px-5 pt-4 pb-3 dark:border-white/[0.06]">
+        <div className="flex flex-1 flex-col gap-1.5 border-t border-black/[0.05] px-4 pt-3 pb-2.5 dark:border-white/[0.05]">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="flex min-w-0 items-center gap-1.5 text-lg font-semibold tracking-tight text-foreground">
+            <h3 className="flex min-w-0 items-center gap-2 text-[15px] font-semibold tracking-tight text-foreground">
+              {pet.dominantColor ? (
+                <span
+                  aria-hidden
+                  className="size-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: "var(--pet-accent)" }}
+                />
+              ) : null}
               <span className="truncate">{pet.displayName}</span>
               {pet.featured ? (
                 <span
@@ -1016,38 +994,20 @@ function PetCardImpl({
                 </span>
               ) : null}
             </h3>
-            <span className="font-mono text-[10px] tracking-[0.18em] text-muted-4 uppercase">
-              {pet.kind}
-            </span>
+            {installCount > 0 ? (
+              <span className="shrink-0 font-mono text-[10px] tracking-[0.12em] text-muted-4">
+                ↓ {formattedInstallCount}
+              </span>
+            ) : null}
           </div>
           <p
             className={cn(
-              "line-clamp-2 text-sm text-muted-2",
-              isZh ? "leading-tight" : "leading-6",
+              "line-clamp-1 text-[13px] text-muted-2",
+              isZh ? "leading-tight" : "leading-5",
             )}
           >
             {pet.description}
           </p>
-          {batchLabel ? (
-            <Badge
-              variant="outline"
-              className="w-fit rounded-full border-black/[0.08] bg-black/[0.03] font-mono text-[10px] tracking-[0.12em] text-muted-2 uppercase dark:border-white/[0.1] dark:bg-white/[0.04]"
-            >
-              {batchLabel}
-            </Badge>
-          ) : null}
-          {pet.vibes.length > 0 ? (
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              {pet.vibes.map((vibe) => (
-                <span
-                  key={vibe}
-                  className="font-mono text-[10px] tracking-[0.12em] text-muted-3 uppercase"
-                >
-                  #{vibe}
-                </span>
-              ))}
-            </div>
-          ) : null}
           {isDiscovered ? (
             <Badge
               variant="outline"
@@ -1060,7 +1020,7 @@ function PetCardImpl({
           ) : null}
 
           {pet.submittedBy && !hideAuthor ? (
-            <div className="mt-2 flex items-center gap-1.5 border-t border-black/[0.05] pt-2 font-mono text-[10px] tracking-[0.12em] text-muted-3 uppercase dark:border-white/[0.05]">
+            <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em] text-muted-3 uppercase">
               {pet.submittedBy.imageUrl &&
               isAllowedAvatarUrl(pet.submittedBy.imageUrl) ? (
                 // biome-ignore lint/performance/noImgElement: avatar allowlisted above
@@ -1078,7 +1038,7 @@ function PetCardImpl({
 
       {/* Footer bar — outside the card-wide Link so each button can
           fire its own action without bubbling up to navigation. */}
-      <div className="mt-auto rounded-b-3xl">
+      <div className="mt-auto rounded-b-2xl transition-opacity duration-200 md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100 md:group-has-[[aria-expanded=true]]:opacity-100">
         <PetCardFooter
           slug={pet.slug}
           displayName={pet.displayName}
@@ -1151,7 +1111,7 @@ function PetCardImpl({
 
           {/* Action menu lives outside the Link so its clicks don't navigate.
  Absolute-positioned to overlap the featured badge corner. */}
-          <div className="absolute top-3 right-4 z-20">
+          <div className="absolute top-2.5 right-3 z-20 transition-opacity duration-200 md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100 md:group-has-[[aria-expanded=true]]:opacity-100">
             <PetActionMenu
               pet={{
                 slug: pet.slug,
