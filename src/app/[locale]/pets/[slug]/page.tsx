@@ -238,7 +238,7 @@ export default async function PetPage({ params }: PageProps) {
       />
 
       <SiteHeader />
-      {/* Hero — single full-width section with petdex-cloud gradient.
+      {/* Hero — single full-width section on the petdex-hero surface.
           Two-column lockup on lg+: animated sprite (the product) on the
           left, identity + CTAs on the right. Mobile collapses to a
           natural vertical stack: dex nav, sprite, info+CTAs. */}
