@@ -16,8 +16,6 @@ import { useLocale, useTranslations } from "next-intl";
 
 import { withLocale } from "@/lib/locale-routing";
 
-import { LocaleSwitcher } from "@/components/brand/locale-switcher";
-import { ThemeToggle } from "@/components/brand/theme-toggle";
 import {
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -127,18 +125,6 @@ export function UserDropdownContent({
           </span>
           <ExternalLink className="size-3.5 text-muted-4" />
         </DropdownMenuItem>
-      </DropdownMenuGroup>
-
-      <DropdownMenuSeparator />
-
-      <DropdownMenuGroup>
-        <DropdownMenuLabel className="px-3 pt-1 pb-1.5 font-mono text-[10px] tracking-[0.18em] text-muted-3 uppercase">
-          {t("settings")}
-        </DropdownMenuLabel>
-        <div className="flex items-center gap-2 px-2 pb-1">
-          <ThemeToggle />
-          <LocaleSwitcher />
-        </div>
       </DropdownMenuGroup>
 
       <DropdownMenuSeparator />

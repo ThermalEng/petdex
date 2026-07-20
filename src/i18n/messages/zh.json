@@ -83,7 +83,6 @@
   },
   "theme": {
     "toggle": "切换主题",
-    "system": "跟随系统（{resolvedTheme}）",
     "dark": "深色",
     "light": "浅色",
     "ariaLabel": "主题：{label}。点击切换。",

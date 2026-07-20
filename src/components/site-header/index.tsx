@@ -3,7 +3,9 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { withLocale } from "@/lib/locale-routing";
 
 import { AuthBadge } from "@/components/auth/auth-badge";
+import { LocaleSwitcher } from "@/components/brand/locale-switcher";
 import { PetdexLogo } from "@/components/brand/petdex-logo";
+import { ThemeToggle } from "@/components/brand/theme-toggle";
 import { DesktopNav } from "@/components/site-header/desktop-nav";
 import { GithubLink } from "@/components/site-header/github-link";
 import { MobileNav } from "@/components/site-header/mobile-nav";
@@ -50,6 +52,14 @@ export async function SiteHeader({ hideSubmitCta = false }: SiteHeaderProps) {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden items-center gap-2 xl:flex">
+            <ThemeToggle />
+            <LocaleSwitcher />
+          </div>
+          <span
+            aria-hidden="true"
+            className="mx-1 hidden h-5 w-px bg-border-base xl:block"
+          />
           <GithubLink item={nav.githubItem} />
           {hideSubmitCta ? null : (
             <SubmitLink

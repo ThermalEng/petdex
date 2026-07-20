@@ -80,10 +80,9 @@
   },
   "theme": {
     "toggle": "Toggle theme",
-    "system": "System ({resolvedTheme})",
     "dark": "Dark",
     "light": "Light",
-    "ariaLabel": "Theme: {label}. Click to cycle.",
+    "ariaLabel": "Theme: {label}. Click to switch.",
     "title": "Theme: {label}"
   },
   "footer": {

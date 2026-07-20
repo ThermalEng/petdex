@@ -80,7 +80,6 @@
   },
   "theme": {
     "toggle": "Cambiar tema",
-    "system": "Sistema ({resolvedTheme})",
     "dark": "Oscuro",
     "light": "Claro",
     "ariaLabel": "Tema: {label}. Haz clic para alternar.",
