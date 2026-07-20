@@ -504,8 +504,8 @@ input {
 .pet-sprite-stage {
   background: radial-gradient(
     circle at 50% 38%,
-    rgb(255 255 255 / 0.95) 0%,
-    rgb(238 241 255 / 0.55) 55%,
+    rgb(82 102 234 / 0.07) 0%,
+    rgb(82 102 234 / 0.03) 55%,
     transparent 80%
   );
   /* Pause sprite animation cost when the stage is offscreen. Browsers
@@ -523,9 +523,34 @@ input {
 .dark .pet-sprite-stage {
   background: radial-gradient(
     circle at 50% 38%,
-    rgb(64 64 70 / 0.85) 0%,
-    rgb(40 40 48 / 0.55) 55%,
+    rgb(101 120 255 / 0.09) 0%,
+    rgb(101 120 255 / 0.04) 55%,
     transparent 80%
+  );
+}
+
+/* The stage shares the hero's faint dot grid, fading toward the
+   edges, so covers and hero speak one surface language. */
+.pet-sprite-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(
+    rgb(82 102 234 / 0.14) 1px,
+    transparent 1px
+  );
+  background-size: 18px 18px;
+  mask-image: radial-gradient(
+    ellipse 70% 65% at 50% 40%,
+    black,
+    transparent 85%
+  );
+  pointer-events: none;
+}
+.dark .pet-sprite-stage::before {
+  background-image: radial-gradient(
+    rgb(137 163 255 / 0.1) 1px,
+    transparent 1px
   );
 }
 

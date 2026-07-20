@@ -313,6 +313,7 @@ async function FeaturedCollections({
                   coverSlug={collection.coverPetSlug}
                   max={5}
                   scale={0.5}
+                  className="border-b border-foreground/[0.05]"
                 />
                 <CardContent className="flex flex-1 flex-col p-4">
                   <div className="flex items-center justify-between gap-3">
