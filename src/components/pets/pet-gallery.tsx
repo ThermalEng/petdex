@@ -23,7 +23,6 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 
 import { COLOR_FAMILIES, type ColorFamily } from "@/lib/color-families";
-import { formatBatchLabel, getBatchKey } from "@/lib/dex-batch";
 import { formatLocalizedNumber } from "@/lib/format-number";
 import { petPreviewUrlForSource } from "@/lib/pet-preview";
 import type { SearchPet } from "@/lib/pet-search";
