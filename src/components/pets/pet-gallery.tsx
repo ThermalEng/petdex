@@ -867,6 +867,7 @@ function PetCardImpl({
           <PetSprite
             src={previewSrc ?? pet.spritesheetPath}
             layout={previewSrc ? "row" : "atlas"}
+            fallbackSrc={previewSrc ? pet.spritesheetPath : undefined}
             state="idle"
             cycleStates={!previewSrc}
             scale={0.7}
