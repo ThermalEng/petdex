@@ -286,9 +286,10 @@ const PetFile = struct {
 /// so a full sheet (11.5MB RGBA) can never ride registerImageBytes.
 /// We decode the sheet ourselves and register one 192x208 frame per
 /// slot (160KB, 16 slots available), replacing in place per state.
-/// V1 macOS dev shim: `sips` converts webp->TGA and we parse TGA
-/// (RLE + raw); V5 swaps the shim for vendored libwebp on all
-/// platforms. Raising the registry caps is on the upstream PR list.
+/// The decode goes through `PlatformServices.decodeImage` with our own
+/// buffer (see `decodeSheet`), so webp and png both ride the platform
+/// codec on macOS, Linux and Windows with nothing vendored. Raising the
+/// registry caps is on the upstream PR list.
 const Sheet = struct {
     pixels: []u8 = &.{},
     width: usize = 0,
@@ -297,77 +298,6 @@ const Sheet = struct {
 };
 var sheet: Sheet = .{};
 
-fn parseTga(allocator: std.mem.Allocator, bytes: []const u8) !Sheet {
-    if (bytes.len < 18) return error.BadTga;
-    if (bytes[1] != 0) return error.UnsupportedTga;
-    const image_type = bytes[2];
-    if (image_type != 2 and image_type != 10) return error.UnsupportedTga;
-    const id_len: usize = bytes[0];
-    const width: usize = @as(usize, bytes[12]) | (@as(usize, bytes[13]) << 8);
-    const height: usize = @as(usize, bytes[14]) | (@as(usize, bytes[15]) << 8);
-    const bpp = bytes[16];
-    if (bpp != 32 and bpp != 24) return error.UnsupportedTga;
-    const bytes_per_pixel: usize = bpp / 8;
-    const top_left = (bytes[17] & 0x20) != 0;
-    if (width == 0 or height == 0 or width > 8192 or height > 8192) return error.BadTga;
-
-    const out = try allocator.alloc(u8, width * height * 4);
-    errdefer allocator.free(out);
-    var src: usize = 18 + id_len;
-    var px: usize = 0;
-    const total = width * height;
-    while (px < total) {
-        if (image_type == 2) {
-            if (src + bytes_per_pixel > bytes.len) return error.BadTga;
-            writeTgaPixel(out, px, bytes[src..], bytes_per_pixel);
-            src += bytes_per_pixel;
-            px += 1;
-        } else {
-            if (src >= bytes.len) return error.BadTga;
-            const packet = bytes[src];
-            src += 1;
-            const count: usize = @as(usize, packet & 0x7f) + 1;
-            if (packet & 0x80 != 0) {
-                if (src + bytes_per_pixel > bytes.len) return error.BadTga;
-                for (0..count) |_| {
-                    if (px >= total) return error.BadTga;
-                    writeTgaPixel(out, px, bytes[src..], bytes_per_pixel);
-                    px += 1;
-                }
-                src += bytes_per_pixel;
-            } else {
-                for (0..count) |_| {
-                    if (px >= total or src + bytes_per_pixel > bytes.len) return error.BadTga;
-                    writeTgaPixel(out, px, bytes[src..], bytes_per_pixel);
-                    src += bytes_per_pixel;
-                    px += 1;
-                }
-            }
-        }
-    }
-    if (!top_left) {
-        const row_len = width * 4;
-        var top: usize = 0;
-        var bottom: usize = height - 1;
-        while (top < bottom) : ({
-            top += 1;
-            bottom -= 1;
-        }) {
-            const a = out[top * row_len ..][0..row_len];
-            const b = out[bottom * row_len ..][0..row_len];
-            for (a, b) |*x, *y| std.mem.swap(u8, x, y);
-        }
-    }
-    return .{ .pixels = out, .width = width, .height = height };
-}
-
-fn writeTgaPixel(out: []u8, px: usize, src: []const u8, bytes_per_pixel: usize) void {
-    const o = px * 4;
-    out[o + 0] = src[2];
-    out[o + 1] = src[1];
-    out[o + 2] = src[0];
-    out[o + 3] = if (bytes_per_pixel == 4) src[3] else 0xff;
-}
 
 /// Scan the petdex pet roots for the first usable pet, honoring
 /// PETDEX_PET as a directory-name override. Returns the sheet bytes
@@ -478,14 +408,10 @@ fn saveSettings(model: *const Model) void {
     cWriteFile(path, json);
 }
 
-/// Convert a pet's sheet to the cached /tmp TGA. sips exits 0 even on
-/// a missing input, so success is the OUTPUT existing, never the exit
-/// code. Prefers pet.json's spritesheetPath, then the standard names.
-fn convertPetToTga(entry: *const CatalogEntry, tga_path: []const u8) bool {
-    const home = env_home orelse return false;
-    var cmd_buf: [1024]u8 = undefined;
-    var probe: [1]u8 = undefined;
-    if (cReadFile(tga_path, &probe) != null) return true;
+/// Read a pet's encoded sheet bytes into `buf`. Prefers pet.json's
+/// spritesheetPath, then the standard names.
+fn readPetSheetBytes(entry: *const CatalogEntry, buf: []u8) ?[]const u8 {
+    const home = env_home orelse return null;
 
     var candidates_buf: [3][64]u8 = undefined;
     var candidates: [3][]const u8 = undefined;
@@ -508,30 +434,68 @@ fn convertPetToTga(entry: *const CatalogEntry, tga_path: []const u8) bool {
     candidates[candidate_count] = "spritesheet.png";
     candidate_count += 1;
 
+    var path_buf: [512]u8 = undefined;
     for (candidates[0..candidate_count]) |name| {
-        const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}/{s}/{s}/{s}' --out '{s}' >/dev/null 2>&1", .{ home, entry.rootSlice(), entry.slice(), name, tga_path }) catch continue;
-        _ = system(cmd);
-        if (cReadFile(tga_path, &probe) != null) return true;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/{s}/{s}/{s}", .{ home, entry.rootSlice(), entry.slice(), name }) catch continue;
+        if (cReadFile(path, buf)) |bytes| return bytes;
     }
-    return false;
+    return null;
 }
 
-/// Convert + decode a pet's sheet from the runtime thread: blocking
-/// sips via std.c.system (a pet switch is a user action, a ~200ms
-/// hitch is fine), then the TGA parse. Names come from directory
-/// scans and are charset-restricted, so the command is injection-safe.
-fn loadSheetForPet(entry: *const CatalogEntry) bool {
-    var tga_buf: [256]u8 = undefined;
-    const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-{s}.tga", .{entry.slice()}) catch return false;
-    if (!convertPetToTga(entry, tga_path)) return false;
-    const tga_heap = boot_allocator.alloc(u8, 64 * 1024 * 1024) catch return false;
-    defer boot_allocator.free(tga_heap);
-    const tga_bytes = cReadFile(tga_path, tga_heap) orelse return false;
-    const parsed = parseTga(boot_allocator, tga_bytes) catch return false;
-    if (sheet.pixels.len > 0) boot_allocator.free(sheet.pixels);
-    sheet = parsed;
-    sheet.rows = if (sheet.height * 1536 >= sheet.width * 2288) 11 else 9;
+/// Encoded sheets are well under a megabyte; the decoded RGBA is the
+/// big side (1536x2288x4 = 13.4MB), so the decode buffer is sized for
+/// the largest sheet the platform codecs accept at our aspect.
+const max_sheet_file_bytes: usize = 4 * 1024 * 1024;
+const max_sheet_pixel_bytes: usize = 16 * 1024 * 1024;
+
+/// Decode a pet sheet through the platform image codec (CGImageSource
+/// on macOS, gdk-pixbuf on Linux, WIC on Windows), the same seam
+/// `fx.registerImageBytes` uses. We call `services.decodeImage` with our
+/// own 16MB buffer instead of registering: the registry caps one image
+/// at 1MB of pixels and its decode scratch at 1.25MB, but that bound
+/// lives in the runtime's registry, not in the decoder, which honors
+/// whatever buffer the caller hands it. Loop-thread only, per the
+/// `PlatformServices.decodeImage` contract.
+fn decodeSheet(fx: *Effects, entry: *const CatalogEntry) ?Sheet {
+    const services = fx.services orelse return null;
+    const file_buf = boot_allocator.alloc(u8, max_sheet_file_bytes) catch return null;
+    defer boot_allocator.free(file_buf);
+    const encoded = readPetSheetBytes(entry, file_buf) orelse return null;
+
+    const pixel_buf = boot_allocator.alloc(u8, max_sheet_pixel_bytes) catch return null;
+    var keep_pixels = false;
+    defer if (!keep_pixels) boot_allocator.free(pixel_buf);
+
+    const decoded = services.decodeImage(encoded, pixel_buf) catch return null;
+    if (decoded.width == 0 or decoded.height == 0) return null;
+    // The decoder slices the caller's buffer, so the pixels are already
+    // at the front: keep the allocation and record the used length.
+    keep_pixels = true;
+    var out: Sheet = .{
+        .pixels = pixel_buf[0 .. decoded.width * decoded.height * 4],
+        .width = decoded.width,
+        .height = decoded.height,
+    };
+    out.rows = if (out.height * 1536 >= out.width * 2288) 11 else 9;
+    return out;
+}
+
+/// Swap the live sheet for `entry`'s. Runs on the loop thread (boot and
+/// the pet-switch Msg), which is where `decodeImage` is legal.
+fn loadSheetForPet(fx: *Effects, entry: *const CatalogEntry) bool {
+    const decoded = decodeSheet(fx, entry) orelse return false;
+    if (sheet.pixels.len > 0) freeSheet(&sheet);
+    sheet = decoded;
     return true;
+}
+
+/// Sheet pixels are a slice into a `max_sheet_pixel_bytes` allocation,
+/// so the free has to restore the original length.
+fn freeSheet(s: *Sheet) void {
+    if (s.pixels.len == 0) return;
+    const base: []u8 = s.pixels.ptr[0..max_sheet_pixel_bytes];
+    boot_allocator.free(base);
+    s.* = .{};
 }
 
 var initial_scale: f32 = 0.7;
@@ -653,15 +617,9 @@ var thumbs_ready: [max_catalog]bool = @splat(false);
 var thumbs_built: usize = 0;
 
 /// Decode one pet's sheet without touching the live global (the pet
-/// keeps animating from its own frames). Same sips shim + TGA parse.
-fn decodeSheetForThumb(entry: *const CatalogEntry) ?Sheet {
-    var tga_buf: [256]u8 = undefined;
-    const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-{s}.tga", .{entry.slice()}) catch return null;
-    if (!convertPetToTga(entry, tga_path)) return null;
-    const heap = boot_allocator.alloc(u8, 64 * 1024 * 1024) catch return null;
-    defer boot_allocator.free(heap);
-    const bytes = cReadFile(tga_path, heap) orelse return null;
-    return parseTga(boot_allocator, bytes) catch null;
+/// keeps animating from its own frames). Same platform-codec path.
+fn decodeSheetForThumb(fx: *Effects, entry: *const CatalogEntry) ?Sheet {
+    return decodeSheet(fx, entry);
 }
 
 /// Build one thumbnail into the atlas and re-register it. Incremental:
@@ -675,8 +633,8 @@ fn buildNextThumb(fx: *Effects) void {
         thumbs_pixels = boot_allocator.alloc(u8, max_catalog * thumb_w * thumb_h * 4) catch return;
         @memset(thumbs_pixels, 0);
     }
-    const decoded = decodeSheetForThumb(&catalog[index]) orelse return;
-    defer boot_allocator.free(decoded.pixels);
+    var decoded = decodeSheetForThumb(fx, &catalog[index]) orelse return;
+    defer freeSheet(&decoded);
     const rows: usize = if (decoded.height * 1536 >= decoded.width * 2288) 11 else 9;
     const fw = decoded.width / cols;
     const fh = decoded.height / rows;
@@ -694,10 +652,12 @@ fn buildNextThumb(fx: *Effects) void {
     fx.registerImage(thumb_atlas_id, max_catalog * thumb_w, thumb_h, thumbs_pixels) catch {};
 }
 
-/// Boot-time load: scan the catalog, pick the initial pet
-/// (PETDEX_PET env > persisted settings > first found), and decode its
-/// sheet through the shared runtime-thread-safe path.
-fn loadSheetPixels(io: std.Io, allocator: std.mem.Allocator, environ_map: *std.process.Environ.Map) !void {
+/// Boot-time resolve: scan the catalog and pick the initial pet
+/// (PETDEX_PET env > persisted settings > first found). The sheet
+/// decode itself waits for `boot`: `decodeImage` is a platform service
+/// bound onto `fx` when the loop thread runs `init_fx`, and it is
+/// loop-thread only, so main() has nothing to decode with yet.
+fn resolveInitialPet(io: std.Io, allocator: std.mem.Allocator, environ_map: *std.process.Environ.Map) !void {
     _ = environ_map;
     scanCatalog(io, allocator);
     if (catalog_len == 0) return error.NoPetInstalled;
@@ -728,7 +688,6 @@ fn loadSheetPixels(io: std.Io, allocator: std.mem.Allocator, environ_map: *std.p
         }
     }
     initial_pet = @intCast(index);
-    if (!loadSheetForPet(&catalog[index])) return error.SheetConvertFailed;
     pet_display_name = catalog[index].slice();
 }
 
@@ -798,7 +757,13 @@ pub fn boot(model: *Model, fx: *Effects) void {
         .mode = .repeating,
         .on_fire = Effects.timerMsg(.poll_tick),
     });
-    if (sheet.pixels.len == 0) return;
+    // First point where the platform codec is reachable: `init_fx` runs
+    // on the loop thread right after the runtime binds services onto fx.
+    if (catalog_len == 0) return;
+    if (!loadSheetForPet(fx, &catalog[initial_pet])) {
+        std.debug.print("petdex: sheet decode failed; install a pet with `petdex install <pet>`\n", .{});
+        return;
+    }
     model.scale = initial_scale;
     model.bubbles_enabled = initial_bubbles;
     model.agents_prompted = initial_agents_prompted;
@@ -925,7 +890,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .close_pet => fx.closeWindow("main"),
         .select_pet => |index| {
             if (index >= catalog_len or index == model.active_pet) return;
-            if (!loadSheetForPet(&catalog[index])) return;
+            if (!loadSheetForPet(fx, &catalog[index])) return;
             model.active_pet = index;
             model.frame_index = 0;
             registerStateFrames(model.state, fx);
@@ -1650,8 +1615,8 @@ pub fn main(init: std.process.Init) !void {
     if (argv0) |a0| refreshHookSymlink(a0);
     env_wanted_pet = init.environ_map.get("PETDEX_PET");
     boot_io = init.io;
-    loadSheetPixels(init.io, boot_allocator, init.environ_map) catch |err| {
-        std.debug.print("petdex: sheet load failed ({s}); install a pet with `petdex install <pet>`\n", .{@errorName(err)});
+    resolveInitialPet(init.io, boot_allocator, init.environ_map) catch |err| {
+        std.debug.print("petdex: no pet found ({s}); install one with `petdex install <pet>`\n", .{@errorName(err)});
     };
     const app_state = try PetdexApp.create(std.heap.page_allocator, .{
         .name = "petdex-desktop-native",
