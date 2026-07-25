@@ -14,6 +14,7 @@ import { getVariantsFor } from "@/lib/variants";
 import { ClaimCTA } from "@/components/auth/claim-cta";
 import { InstallCommandCompact } from "@/components/download/install-command-compact";
 import { InstallCommandLazy } from "@/components/download/install-command-lazy";
+import { OpenInCodexButton } from "@/components/download/open-in-codex-button";
 import { OpenInPetdexButton } from "@/components/download/open-in-petdex-button";
 import { JsonLd } from "@/components/layout/json-ld";
 import { ReducedMotionHint } from "@/components/onboarding/reduced-motion-hint";
@@ -309,8 +310,9 @@ export default async function PetPage({ params }: PageProps) {
 
             {/* Right column: identity + CTAs + meta. Order is intentional:
                 eyebrow → name → description → primary CTA (Open in
-                Petdex) → secondary CTA (install command) → quick
-                actions (like/sound/menu + stats) → tags → collections. */}
+                Petdex) → tertiary CTA (Open in Codex) → secondary CTA
+                (install command) → quick actions (like/sound/menu +
+                stats) → tags → collections. */}
             <header className="flex flex-col gap-5">
               <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
                 <p className="font-mono text-xs tracking-[0.22em] text-brand uppercase">
@@ -342,6 +344,12 @@ export default async function PetPage({ params }: PageProps) {
               </p>
 
               <OpenInPetdexButton slug={pet.slug} />
+
+              <OpenInCodexButton
+                displayName={pet.displayName}
+                description={pet.description}
+                spritesheetUrl={pet.spritesheetPath}
+              />
 
               {/* Secondary CTA: single-line npx command + link to the
                   full install guide. The verbose tabs/instructions
