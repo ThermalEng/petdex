@@ -4,13 +4,15 @@ name: petdex-desktop-native ci
 # platform stays invisible until someone cuts a release. This builds
 # every target the app claims in app.zon on each push that touches it.
 #
-# Linux and Windows are expected to fail today: the pet spritesheet
-# decoder still shells out to macOS `sips`, and parts of the app use
-# std.c (POSIX) which x86_64-windows cannot compile. They run with
-# continue-on-error so the matrix reports honest per-platform status
-# instead of a red check everyone learns to ignore. Flip the flag off
-# per platform as each one starts passing, and drop it entirely once
-# app.zon's `.platforms` is true.
+# macOS and Windows both compile. Windows is cross-compiled and has
+# never run on a Windows host, so its Win32 paths (symlink privilege,
+# the ACL fallback for the token file, `cmd /c start`) are unexercised
+# even when this job is green.
+#
+# Linux stays continue-on-error until this job answers whether it
+# builds at all: the only evidence so far is a cross-compile from macOS
+# that died on a missing gtk4, which says nothing about the code. Drop
+# the flag once a run comes back green.
 
 on:
   push:
@@ -43,7 +45,7 @@ jobs:
           - platform: windows
             runner: ubuntu-latest
             zig_target: x86_64-windows
-            expected_to_fail: true
+            expected_to_fail: false
 
     steps:
       - name: Checkout petdex
