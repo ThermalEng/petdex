@@ -1608,7 +1608,13 @@ const app_menus = [_]native_sdk.platform.Menu{.{
 const PetdexApp = native_sdk.UiApp(Model, Msg);
 
 pub fn main(init: std.process.Init) !void {
-    env_home = init.environ_map.get("HOME");
+    // Windows has no HOME. Everything the app keeps per-user hangs off
+    // this one lookup (the pet catalog, ~/.petdex/runtime, the settings
+    // file), so reading only HOME made a Windows build behave like a
+    // machine with nothing installed even with pets sitting in
+    // %USERPROFILE%\.petdex\pets. HOME still wins where it exists, so a
+    // POSIX user pointing it elsewhere keeps that.
+    env_home = init.environ_map.get("HOME") orelse init.environ_map.get("USERPROFILE");
     // Hook hot path: `<binary> bubble <phase> [agent]` runs the
     // in-binary runner and exits before any UI machinery spins up.
     // initAllocator, not init: on Windows the command line arrives as
