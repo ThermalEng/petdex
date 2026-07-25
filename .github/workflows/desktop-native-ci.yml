@@ -4,15 +4,17 @@ name: petdex-desktop-native ci
 # platform stays invisible until someone cuts a release. This builds
 # every target the app claims in app.zon on each push that touches it.
 #
-# macOS and Windows both compile. Windows is cross-compiled and has
-# never run on a Windows host, so its Win32 paths (symlink privilege,
-# the ACL fallback for the token file, `cmd /c start`) are unexercised
-# even when this job is green.
+# Building is not the bar. The hook server regression on this branch
+# compiled cleanly on every platform and still answered 401 to every
+# authenticated POST, so Linux and Windows also run the binary, drive a
+# real hook round trip, and photograph the screen. The screenshots are
+# uploaded as artifacts because a human still has to look at them.
 #
-# Linux stays continue-on-error until this job answers whether it
-# builds at all: the only evidence so far is a cross-compile from macOS
-# that died on a missing gtk4, which says nothing about the code. Drop
-# the flag once a run comes back green.
+# Both stay continue-on-error until a run comes back green: neither has
+# ever executed this app. Windows has only been cross-compiled, which
+# proves none of its Win32 paths, and the only Linux evidence is a
+# cross-compile from macOS that died on a missing gtk4 and said nothing
+# about our code. Drop the flag per platform as each one passes.
 
 on:
   push:
@@ -36,16 +38,17 @@ jobs:
         include:
           - platform: macos
             runner: macos-14
-            zig_target: ""
             expected_to_fail: false
           - platform: linux
             runner: ubuntu-latest
-            zig_target: ""
             expected_to_fail: true
+          # A real Windows box, not a cross-compile: the Win32 paths
+          # (symlink privilege, the ACL fallback for the token file,
+          # `cmd /c start`) only run here, and cross-compiling proves
+          # none of them.
           - platform: windows
-            runner: ubuntu-latest
-            zig_target: x86_64-windows
-            expected_to_fail: false
+            runner: windows-2022
+            expected_to_fail: true
 
     steps:
       - name: Checkout petdex
@@ -71,6 +74,7 @@ jobs:
           NATIVE_SDK_REMOTE: "https://github.com/Railly/native.git"
           NATIVE_SDK_BRANCH: "feat/floating-window-0.5.3"
           NATIVE_SDK_REF: "b414704da8ff1aa3b9caa11d4db6a72eca47f717"
+        shell: bash
         run: |
           set -euo pipefail
           git clone --depth 1 --branch "$NATIVE_SDK_BRANCH" "$NATIVE_SDK_REMOTE" "$GITHUB_WORKSPACE/native-sdk"
@@ -88,16 +92,100 @@ jobs:
         # released one rejects app.zon's `.floating` with a bare
         # ParseZon, so the CLI has to come from the same commit.
         working-directory: ${{ env.NATIVE_SDK_PATH }}
+        shell: bash
         run: |
           zig build cli
           echo "NATIVE_CLI=$NATIVE_SDK_PATH/zig-out/bin/native" >> "$GITHUB_ENV"
 
       - name: Build petdex-desktop-native
         working-directory: packages/petdex-desktop-native
+        shell: bash
         run: |
-          if [ -n "${{ matrix.zig_target }}" ]; then
-            "$NATIVE_CLI" build -Dtarget=${{ matrix.zig_target }}
-          else
-            "$NATIVE_CLI" build
-          fi
+          "$NATIVE_CLI" build
           ls -lh zig-out/bin/
+
+      # Compiling proves nothing about whether the app draws: the hook
+      # server regression that shipped in this branch compiled fine on
+      # every platform. These steps run the binary, exercise the hook
+      # round trip, and photograph the screen so a human can see the pet.
+
+      - name: Install a pet
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.petdex/pets/ci-pet
+          # A known-good v2 atlas from the live catalog, so a decode
+          # failure here is the platform codec, never a bad fixture.
+          curl -fsSL -o ~/.petdex/pets/ci-pet/spritesheet.webp \
+            "$(curl -fsSL https://petdex.dev/api/install-pet/boba | sed -n 's/.*"spritesheetUrl":"\([^"]*\)".*/\1/p')"
+          printf '{"id":"ci-pet","displayName":"CI Pet","description":"ci","spritesheetPath":"spritesheet.webp"}' \
+            > ~/.petdex/pets/ci-pet/pet.json
+          ls -lh ~/.petdex/pets/ci-pet/
+
+      - name: Run and exercise the hook server (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        working-directory: packages/petdex-desktop-native
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y xvfb imagemagick
+          # Xvfb gives the GTK host a real display to draw into; without
+          # one the app has nothing to present to and the screenshot
+          # would prove nothing.
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x800x24 &
+          sleep 3
+          PETDEX_PET=ci-pet ./zig-out/bin/petdex-desktop-native > run.log 2>&1 &
+          APP_PID=$!
+          sleep 10
+          kill -0 "$APP_PID" || { echo "app died"; cat run.log; exit 1; }
+          TOKEN=$(cat ~/.petdex/runtime/update-token)
+          curl -fsS -X POST -H "x-petdex-update-token: $TOKEN" \
+            -H "Content-Type: application/json" -d '{"state":"running"}' \
+            http://127.0.0.1:7777/state
+          echo
+          curl -fsS http://127.0.0.1:7777/state
+          echo
+          import -window root /tmp/linux-screen.png
+          kill "$APP_PID" || true
+          tail -30 run.log
+
+      - name: Run and exercise the hook server (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        working-directory: packages/petdex-desktop-native
+        run: |
+          $env:PETDEX_PET = "ci-pet"
+          $app = Start-Process -FilePath ".\zig-out\bin\petdex-desktop-native.exe" `
+            -RedirectStandardOutput run.log -RedirectStandardError run.err -PassThru
+          Start-Sleep -Seconds 10
+          if ($app.HasExited) { Get-Content run.log, run.err; throw "app exited early" }
+          $token = Get-Content "$env:USERPROFILE\.petdex\runtime\update-token" -Raw
+          Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:7777/state" `
+            -Headers @{ "x-petdex-update-token" = $token } `
+            -ContentType "application/json" -Body '{"state":"running"}' | ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "http://127.0.0.1:7777/state" | ConvertTo-Json -Compress
+          # GDI capture of the whole desktop: the only way to see whether
+          # the window actually painted on this runner.
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:TEMP\windows-screen.png")
+          # A titled window the shell tracks is independent evidence the
+          # surface is real and not just pixels we drew.
+          Get-Process | Where-Object { $_.MainWindowTitle } |
+            Select-Object ProcessName, MainWindowTitle | Format-Table -AutoSize
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Get-Content run.log -Tail 30
+
+      - name: Upload the screenshot
+        if: always() && matrix.platform != 'macos'
+        uses: actions/upload-artifact@v7
+        with:
+          name: screen-${{ matrix.platform }}
+          path: |
+            /tmp/linux-screen.png
+            ${{ runner.temp }}/windows-screen.png
+          if-no-files-found: warn
