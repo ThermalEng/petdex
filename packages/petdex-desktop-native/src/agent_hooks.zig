@@ -10,6 +10,7 @@
 //! entries, and a one-time backup is written beside any file we edit.
 
 const std = @import("std");
+const plat = @import("plat.zig");
 
 pub const AgentKind = enum(u8) {
     claude_code,
@@ -81,58 +82,12 @@ fn classifyConfig(content: []const u8) HookStatus {
     return .none;
 }
 
-fn dirExists(path: []const u8) bool {
-    var z: [512]u8 = undefined;
-    const pz = std.fmt.bufPrintZ(&z, "{s}", .{path}) catch return false;
-    const d = std.c.opendir(pz) orelse return false;
-    _ = std.c.closedir(d);
-    return true;
-}
+const dirExists = plat.dirExists;
+const fileExists = plat.fileExists;
+const writeFile = plat.writeFile;
 
 fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max: usize) ?[]u8 {
-    var z: [512]u8 = undefined;
-    const pz = std.fmt.bufPrintZ(&z, "{s}", .{path}) catch return null;
-    const fd = std.c.open(pz, .{ .ACCMODE = .RDONLY });
-    if (fd < 0) return null;
-    defer _ = std.c.close(fd);
-    const buf = allocator.alloc(u8, max) catch return null;
-    var total: usize = 0;
-    while (total < buf.len) {
-        const n = std.c.read(fd, buf[total..].ptr, buf.len - total);
-        if (n <= 0) break;
-        total += @intCast(n);
-    }
-    if (total == 0) {
-        allocator.free(buf);
-        return null;
-    }
-    // Shrink to the read size so the caller's free matches the
-    // allocation (freeing a shorter slice is UB).
-    return allocator.realloc(buf, total) catch buf[0..total];
-}
-
-fn writeFile(path: []const u8, bytes: []const u8) bool {
-    var z: [512]u8 = undefined;
-    const pz = std.fmt.bufPrintZ(&z, "{s}", .{path}) catch return false;
-    const fd = std.c.open(pz, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
-    if (fd < 0) return false;
-    defer _ = std.c.close(fd);
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const n = std.c.write(fd, bytes.ptr + off, bytes.len - off);
-        if (n <= 0) return false;
-        off += @intCast(n);
-    }
-    return true;
-}
-
-fn fileExists(path: []const u8) bool {
-    var z: [512]u8 = undefined;
-    const pz = std.fmt.bufPrintZ(&z, "{s}", .{path}) catch return false;
-    const fd = std.c.open(pz, .{ .ACCMODE = .RDONLY });
-    if (fd < 0) return false;
-    _ = std.c.close(fd);
-    return true;
+    return plat.readFileAlloc(allocator, path, max);
 }
 
 /// One-time backup beside the file we are about to edit.
@@ -221,9 +176,8 @@ const opencode_plugin = @embedFile("assets/opencode-plugin.js");
 
 pub fn installOpencode(allocator: std.mem.Allocator, home: []const u8) bool {
     var path_buf: [512]u8 = undefined;
-    var z: [512]u8 = undefined;
     const dir = std.fmt.bufPrint(&path_buf, "{s}/.config/opencode/plugins", .{home}) catch return false;
-    _ = std.c.mkdir(std.fmt.bufPrintZ(&z, "{s}", .{dir}) catch return false, 0o755);
+    plat.makeDir(dir);
     const path = std.fmt.bufPrint(&path_buf, "{s}/.config/opencode/plugins/petdex.js", .{home}) catch return false;
     backupOnce(allocator, path);
     return writeFile(path, opencode_plugin);
@@ -414,13 +368,13 @@ pub fn uninstall(allocator: std.mem.Allocator, home: []const u8, kind: AgentKind
         .codex => {
             // hooks.json is wholly ours; the config.toml feature flag
             // stays (harmless without the file).
-            const pz = std.fmt.bufPrintZ(&z, "{s}/.codex/hooks.json", .{home}) catch return false;
-            _ = std.c.unlink(pz);
+            const p = std.fmt.bufPrint(&path_buf, "{s}/.codex/hooks.json", .{home}) catch return false;
+            plat.deleteFile(p);
             return true;
         },
         .opencode => {
-            const pz = std.fmt.bufPrintZ(&z, "{s}/.config/opencode/plugins/petdex.js", .{home}) catch return false;
-            _ = std.c.unlink(pz);
+            const p = std.fmt.bufPrint(&path_buf, "{s}/.config/opencode/plugins/petdex.js", .{home}) catch return false;
+            plat.deleteFile(p);
             return true;
         },
     }
@@ -452,9 +406,7 @@ test "claude merge preserves foreign keys and hooks, replaces petdex entries" {
 
 test "installClaude merges into a real fixture home non-destructively" {
     const home = "/tmp/petdex-agenthooks-fixture";
-    var z: [512]u8 = undefined;
-    _ = std.c.mkdir(std.fmt.bufPrintZ(&z, "{s}", .{home}) catch unreachable, 0o755);
-    _ = std.c.mkdir(std.fmt.bufPrintZ(&z, "{s}/.claude", .{home}) catch unreachable, 0o755);
+    plat.makeDir(home ++ "/.claude");
     const fixture =
         \\{"model":"opus","hooks":{"PreToolUse":[
         \\ {"matcher":"Bash","hooks":[{"type":"command","command":"my-own-thing"}]},
@@ -488,8 +440,7 @@ test "installClaude merges into a real fixture home non-destructively" {
 
 test "installCodex writes hooks.json and feature flag" {
     const home = "/tmp/petdex-agenthooks-fixture";
-    var z: [512]u8 = undefined;
-    _ = std.c.mkdir(std.fmt.bufPrintZ(&z, "{s}/.codex", .{home}) catch unreachable, 0o755);
+    plat.makeDir(home ++ "/.codex");
     var pb: [512]u8 = undefined;
     const toml = std.fmt.bufPrint(&pb, "{s}/.codex/config.toml", .{home}) catch unreachable;
     try t.expect(writeFile(toml, "model = \"gpt\"\n[features]\nmemories = true\n"));

@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const hook_server = @import("hook_server.zig");
+const plat = @import("plat.zig");
 
 const jsonString = hook_server.jsonStringPub;
 
@@ -299,18 +300,14 @@ fn safeSessionId(raw: ?[]const u8) ?[]const u8 {
 }
 
 fn rememberTitle(dir: []const u8, session_id: []const u8, prompt: []const u8) void {
-    var dir_z: [512]u8 = undefined;
-    const dz = std.fmt.bufPrintZ(&dir_z, "{s}", .{dir}) catch return;
-    _ = std.c.mkdir(dz, 0o755);
+    plat.makeDir(dir);
     var title_buf: [256]u8 = undefined;
     const title = clipEscaped(prompt, title_max, &title_buf) orelse return;
     if (title.len == 0) return;
     var path_buf: [512]u8 = undefined;
     const path = std.fmt.bufPrint(&path_buf, "{s}/{s}.json", .{ dir, session_id }) catch return;
-    var now_tv: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&now_tv, null);
     var json_buf: [512]u8 = undefined;
-    const json = std.fmt.bufPrint(&json_buf, "{{\"title\":\"{s}\",\"at\":{d}}}", .{ title, now_tv.sec }) catch return;
+    const json = std.fmt.bufPrint(&json_buf, "{{\"title\":\"{s}\",\"at\":{d}}}", .{ title, plat.nowSeconds() }) catch return;
     cWriteFile(path, json);
 }
 
@@ -325,27 +322,41 @@ fn readTitle(dir: []const u8, session_id: []const u8, buf: *[256]u8) ?[]const u8
     return buf[0..title.len];
 }
 
+const PruneCtx = struct {
+    dir: []const u8,
+    now: i64,
+    // Deleting through the handle being iterated is not portable, so
+    // expired names are staged here and unlinked after the walk. A
+    // session dir past this many files just prunes on the next run.
+    stale: [64][std.Io.Dir.max_name_bytes]u8 = undefined,
+    stale_len: [64]usize = @splat(0),
+    count: usize = 0,
+};
+
+fn pruneVisit(ctx: *PruneCtx, name: []const u8) void {
+    if (ctx.count == ctx.stale.len) return;
+    if (!std.mem.endsWith(u8, name, ".json")) return;
+    if (name.len > std.Io.Dir.max_name_bytes) return;
+    var path_buf: [512]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ ctx.dir, name }) catch return;
+    var file_buf: [512]u8 = undefined;
+    const json = cReadFile(path, &file_buf) orelse return;
+    // The write stamp lives inside the file ("at": epoch seconds),
+    // so GC never needs a stat struct.
+    const at = hook_server.jsonNumberPub(json, "at") orelse return;
+    if (@as(f64, @floatFromInt(ctx.now)) - at <= @as(f64, @floatFromInt(session_ttl_secs))) return;
+    @memcpy(ctx.stale[ctx.count][0..name.len], name);
+    ctx.stale_len[ctx.count] = name.len;
+    ctx.count += 1;
+}
+
 fn pruneSessions(dir: []const u8) void {
-    var dir_z: [512]u8 = undefined;
-    const dz = std.fmt.bufPrintZ(&dir_z, "{s}", .{dir}) catch return;
-    const d = std.c.opendir(dz) orelse return;
-    defer _ = std.c.closedir(d);
-    var now_tv: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&now_tv, null);
-    const now: i64 = @intCast(now_tv.sec);
-    while (std.c.readdir(d)) |entry| {
-        const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(&entry.name)), 0);
-        if (!std.mem.endsWith(u8, name, ".json")) continue;
+    var ctx: PruneCtx = .{ .dir = dir, .now = plat.nowSeconds() };
+    plat.forEachEntry(dir, &ctx, pruneVisit);
+    for (0..ctx.count) |i| {
         var path_buf: [512]u8 = undefined;
-        const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ dir, name }) catch continue;
-        var file_buf: [512]u8 = undefined;
-        const json = cReadFile(path, &file_buf) orelse continue;
-        // The write stamp lives inside the file ("at": epoch seconds),
-        // so GC never needs a stat struct.
-        const at = hook_server.jsonNumberPub(json, "at") orelse continue;
-        var path_z: [512]u8 = undefined;
-        const pz = std.fmt.bufPrintZ(&path_z, "{s}", .{path}) catch continue;
-        if (@as(f64, @floatFromInt(now)) - at > @as(f64, @floatFromInt(session_ttl_secs))) _ = std.c.unlink(pz);
+        const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ dir, ctx.stale[i][0..ctx.stale_len[i]] }) catch continue;
+        plat.deleteFile(path);
     }
 }
 
@@ -395,92 +406,41 @@ fn firstTextPart(line: []const u8) ?[]const u8 {
 
 // ------------------------------------------------------------- plumbing
 
-fn readStdin(buf: []u8) []const u8 {
-    var total: usize = 0;
-    while (total < buf.len) {
-        const n = std.c.read(0, buf[total..].ptr, buf.len - total);
-        if (n <= 0) break;
-        total += @intCast(n);
-    }
-    return buf[0..total];
-}
-
-fn cReadFile(path: []const u8, buf: []u8) ?[]const u8 {
-    var path_z: [512]u8 = undefined;
-    const pz = std.fmt.bufPrintZ(&path_z, "{s}", .{path}) catch return null;
-    const fd = std.c.open(pz, .{ .ACCMODE = .RDONLY });
-    if (fd < 0) return null;
-    defer _ = std.c.close(fd);
-    var total: usize = 0;
-    while (total < buf.len) {
-        const n = std.c.read(fd, buf[total..].ptr, buf.len - total);
-        if (n <= 0) break;
-        total += @intCast(n);
-    }
-    if (total == 0) return null;
-    return buf[0..total];
-}
-
-/// Bounded tail read: last `buf.len` bytes of the file.
-fn cReadTail(path: []const u8, buf: []u8) ?[]const u8 {
-    var path_z: [512]u8 = undefined;
-    const pz = std.fmt.bufPrintZ(&path_z, "{s}", .{path}) catch return null;
-    const fd = std.c.open(pz, .{ .ACCMODE = .RDONLY });
-    if (fd < 0) return null;
-    defer _ = std.c.close(fd);
-    const size = std.c.lseek(fd, 0, std.c.SEEK.END);
-    if (size <= 0) return null;
-    const want: i64 = @intCast(@min(@as(u64, @intCast(size)), buf.len));
-    _ = std.c.lseek(fd, size - want, std.c.SEEK.SET);
-    var total: usize = 0;
-    while (total < want) {
-        const n = std.c.read(fd, buf[total..].ptr, @as(usize, @intCast(want)) - total);
-        if (n <= 0) break;
-        total += @intCast(n);
-    }
-    if (total == 0) return null;
-    return buf[0..total];
-}
+const readStdin = plat.readStdin;
+const cReadFile = plat.readFile;
+const cReadTail = plat.readFileTail;
 
 fn cWriteFile(path: []const u8, bytes: []const u8) void {
-    var path_z: [512]u8 = undefined;
-    const pz = std.fmt.bufPrintZ(&path_z, "{s}", .{path}) catch return;
-    const fd = std.c.open(pz, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
-    if (fd < 0) return;
-    defer _ = std.c.close(fd);
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const n = std.c.write(fd, bytes.ptr + off, bytes.len - off);
-        if (n <= 0) return;
-        off += @intCast(n);
-    }
+    _ = plat.writeFile(path, bytes);
 }
 
 /// Minimal HTTP POST to the sidecar. Fire, read a token of response,
 /// close. A dead sidecar is connection refused — silent, like today.
 fn postLocalhost(path: []const u8, body: []const u8, token: []const u8) void {
-    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-    if (fd < 0) return;
-    defer _ = std.c.close(fd);
-    const timeout = std.c.timeval{ .sec = 0, .usec = 300_000 };
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.RCVTIMEO, &timeout, @sizeOf(std.c.timeval));
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.SNDTIMEO, &timeout, @sizeOf(std.c.timeval));
-    var addr: std.c.sockaddr.in = .{
-        .family = std.c.AF.INET,
-        .port = std.mem.nativeToBig(u16, 7777),
-        .addr = std.mem.nativeToBig(u32, 0x7F000001),
-    };
-    if (std.c.connect(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return;
+    var scope = plat.Scope.init();
+    defer scope.deinit();
+    const io = scope.io();
+    const addr: std.Io.net.IpAddress = .{ .ip4 = .loopback(7777) };
+    // Same 300ms bound the SO_RCVTIMEO/SO_SNDTIMEO pair enforced: this
+    // runs on the agent's hot path and must never hang it.
+    var stream = addr.connect(io, .{
+        .mode = .stream,
+        .protocol = .tcp,
+        .timeout = .{ .duration = .fromMilliseconds(300) },
+    }) catch return;
+    defer stream.close(io);
     var req_buf: [1600]u8 = undefined;
     const req = std.fmt.bufPrint(&req_buf, "POST {s} HTTP/1.1\r\nhost: 127.0.0.1\r\nx-petdex-update-token: {s}\r\ncontent-type: application/json\r\ncontent-length: {d}\r\nconnection: close\r\n\r\n{s}", .{ path, token, body.len, body }) catch return;
-    var off: usize = 0;
-    while (off < req.len) {
-        const n = std.c.write(fd, req.ptr + off, req.len - off);
-        if (n <= 0) return;
-        off += @intCast(n);
-    }
+    var write_buf: [64]u8 = undefined;
+    var writer = stream.writer(io, &write_buf);
+    writer.interface.writeAll(req) catch return;
+    writer.interface.flush() catch return;
+    // Drain a token of the reply so the server sees an orderly close;
+    // the runner never inspects it (every failure exits 0 silently).
+    var read_buf: [256]u8 = undefined;
+    var reader = stream.reader(io, &read_buf);
     var resp: [256]u8 = undefined;
-    _ = std.c.read(fd, &resp, resp.len);
+    _ = reader.interface().readSliceShort(&resp) catch {};
 }
 
 // ------------------------------------------------------------ parity
