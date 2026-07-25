@@ -128,7 +128,7 @@ jobs:
         working-directory: packages/petdex-desktop-native
         run: |
           set -euo pipefail
-          sudo apt-get install -y xvfb imagemagick
+          sudo apt-get install -y xvfb imagemagick x11-utils
           # Xvfb gives the GTK host a real display to draw into; without
           # one the app has nothing to present to and the screenshot
           # would prove nothing.
@@ -147,24 +147,58 @@ jobs:
           curl -fsS http://127.0.0.1:7777/state
           echo
           import -window root /tmp/linux-screen.png
+          # The first run drew a titled window with a blank interior:
+          # frames present, the sheet decodes, nothing paints. These
+          # narrow it down. GTK's renderer matters because the default
+          # picks GL, which has no driver under Xvfb; the cairo fallback
+          # says whether that is the reason.
+          echo "=== window tree ==="
+          xwininfo -root -tree | head -20 || true
+          echo "=== app log (full) ==="
+          cat run.log
           kill "$APP_PID" || true
-          tail -30 run.log
+          sleep 2
+          echo "=== retry with the cairo renderer ==="
+          GSK_RENDERER=cairo PETDEX_PET=ci-pet ./zig-out/bin/petdex-desktop-native > cairo.log 2>&1 &
+          CAIRO_PID=$!
+          sleep 10
+          import -window root /tmp/linux-screen-cairo.png || true
+          kill "$CAIRO_PID" || true
+          tail -20 cairo.log
 
       - name: Run and exercise the hook server (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
         working-directory: packages/petdex-desktop-native
         run: |
+          # Everything diagnostic runs before anything that can throw.
+          # The first version put the log dump after the token read, so
+          # a missing token killed the step and the app's own output
+          # never reached the log, leaving nothing to diagnose.
+          $ErrorActionPreference = "Continue"
           $env:PETDEX_PET = "ci-pet"
           $app = Start-Process -FilePath ".\zig-out\bin\petdex-desktop-native.exe" `
             -RedirectStandardOutput run.log -RedirectStandardError run.err -PassThru
-          Start-Sleep -Seconds 10
-          if ($app.HasExited) { Get-Content run.log, run.err; throw "app exited early" }
-          $token = Get-Content "$env:USERPROFILE\.petdex\runtime\update-token" -Raw
-          Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:7777/state" `
-            -Headers @{ "x-petdex-update-token" = $token } `
-            -ContentType "application/json" -Body '{"state":"running"}' | ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri "http://127.0.0.1:7777/state" | ConvertTo-Json -Compress
+          Start-Sleep -Seconds 12
+
+          "=== process ==="
+          if ($app.HasExited) { "EXITED, code $($app.ExitCode)" } else { "alive, pid $($app.Id)" }
+
+          "=== stdout ==="; Get-Content run.log -ErrorAction SilentlyContinue
+          "=== stderr ==="; Get-Content run.err -ErrorAction SilentlyContinue
+
+          "=== ~/.petdex tree ==="
+          Get-ChildItem "$env:USERPROFILE\.petdex" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 40 FullName, Length | Format-Table -AutoSize
+
+          "=== listening on 7777 ==="
+          Get-NetTCPConnection -LocalPort 7777 -State Listen -ErrorAction SilentlyContinue |
+            Select-Object LocalAddress, OwningProcess | Format-Table -AutoSize
+
+          "=== titled windows ==="
+          Get-Process | Where-Object { $_.MainWindowTitle } |
+            Select-Object ProcessName, MainWindowTitle | Format-Table -AutoSize
+
           # GDI capture of the whole desktop: the only way to see whether
           # the window actually painted on this runner.
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -173,12 +207,22 @@ jobs:
           $g = [System.Drawing.Graphics]::FromImage($bmp)
           $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
           $bmp.Save("$env:TEMP\windows-screen.png")
-          # A titled window the shell tracks is independent evidence the
-          # surface is real and not just pixels we drew.
-          Get-Process | Where-Object { $_.MainWindowTitle } |
-            Select-Object ProcessName, MainWindowTitle | Format-Table -AutoSize
+          "screenshot saved"
+
+          $tokenPath = "$env:USERPROFILE\.petdex\runtime\update-token"
+          if (Test-Path $tokenPath) {
+            $token = Get-Content $tokenPath -Raw
+            "=== hook round trip ==="
+            Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:7777/state" `
+              -Headers @{ "x-petdex-update-token" = $token } `
+              -ContentType "application/json" -Body '{"state":"running"}' | ConvertTo-Json -Compress
+            Invoke-RestMethod -Uri "http://127.0.0.1:7777/state" | ConvertTo-Json -Compress
+          } else {
+            "NO TOKEN at $tokenPath"
+          }
+
           Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
-          Get-Content run.log -Tail 30
+          if (-not (Test-Path $tokenPath)) { throw "token was never written" }
 
       - name: Upload the screenshot
         if: always() && matrix.platform != 'macos'
@@ -187,5 +231,6 @@ jobs:
           name: screen-${{ matrix.platform }}
           path: |
             /tmp/linux-screen.png
+            /tmp/linux-screen-cairo.png
             ${{ runner.temp }}/windows-screen.png
           if-no-files-found: warn
