@@ -64,7 +64,12 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev pkg-config
+          # webp-pixbuf-loader is the part that matters for pets. gdk-pixbuf
+          # decodes through loader plugins, and Ubuntu ships none for webp
+          # by default, so every sheet in the catalog (60 of 63 are .webp)
+          # fails to decode and the window comes up empty. libwebp alone is
+          # not enough: that is the codec, this is the plugin that reaches it.
+          sudo apt-get install -y libgtk-4-dev pkg-config webp-pixbuf-loader
 
       - name: Clone the Native SDK
         # Pinned to the same commit desktop-release.yml uses: the
@@ -109,7 +114,8 @@ jobs:
       # every platform. These steps run the binary, exercise the hook
       # round trip, and photograph the screen so a human can see the pet.
 
-      - name: Install a pet
+      - name: Install a pet (Unix)
+        if: matrix.platform != 'windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -121,6 +127,22 @@ jobs:
           printf '{"id":"ci-pet","displayName":"CI Pet","description":"ci","spritesheetPath":"spritesheet.webp"}' \
             > ~/.petdex/pets/ci-pet/pet.json
           ls -lh ~/.petdex/pets/ci-pet/
+
+      - name: Install a pet (Windows)
+        # PowerShell, not bash: git-bash's `~` is not $env:USERPROFILE on
+        # this runner, so the bash version wrote the pet somewhere the
+        # app never looks and the app reported NoPetInstalled with the
+        # files sitting right there.
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $dir = "$env:USERPROFILE\.petdex\pets\ci-pet"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $meta = Invoke-RestMethod -Uri "https://petdex.dev/api/install-pet/boba"
+          Invoke-WebRequest -Uri $meta.pet.spritesheetUrl -OutFile "$dir\spritesheet.webp"
+          '{"id":"ci-pet","displayName":"CI Pet","description":"ci","spritesheetPath":"spritesheet.webp"}' |
+            Set-Content -Path "$dir\pet.json" -NoNewline
+          Get-ChildItem $dir | Select-Object Name, Length | Format-Table -AutoSize
 
       - name: Run and exercise the hook server (Linux)
         if: matrix.platform == 'linux'

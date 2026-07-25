@@ -12,6 +12,7 @@
 //! server in V2).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const runner = @import("runner");
 
 extern "c" fn system(command: [*:0]const u8) c_int;
@@ -759,7 +760,16 @@ pub fn boot(model: *Model, fx: *Effects) void {
         }
     }
     const active = chosen orelse {
-        std.debug.print("petdex: no installed pet decoded; install one with `petdex install <pet>`\n", .{});
+        // Distinguish an empty catalog from a catalog the platform codec
+        // cannot read: on Linux gdk-pixbuf needs a loader plugin per
+        // format, and Ubuntu ships none for webp, so every pet decodes
+        // to nothing while sitting right there on disk. Telling that
+        // user to install a pet sends them in the wrong direction.
+        if (builtin.os.tag == .linux) {
+            std.debug.print("petdex: {d} pet(s) installed but none decoded; on Linux webp needs the gdk-pixbuf loader (apt install webp-pixbuf-loader)\n", .{catalog_len});
+        } else {
+            std.debug.print("petdex: {d} pet(s) installed but none decoded; the sheet may be corrupt\n", .{catalog_len});
+        }
         return;
     };
     if (active != initial_pet) {
