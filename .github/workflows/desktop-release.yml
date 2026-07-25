@@ -142,10 +142,9 @@ jobs:
             --binary zig-out/bin/petdex-desktop-native \
             --output "Petdex.app" \
             --signing adhoc
-          # The agent logos and the pet atlas are read from
-          # Contents/Resources at runtime, so a bundle that lost them
-          # launches with blank rows instead of failing loudly.
-          test -f "Petdex.app/Contents/Resources/assets/agents/claude-code.png"
+          # Agent logos are compiled into the binary, so only the app
+          # icon still has to survive packaging.
+          test -f "Petdex.app/Contents/Resources/assets/icon.png"
           ditto -c -k --keepParent "Petdex.app" "petdex-desktop-native-${{ matrix.target }}.zip"
           ls -lh "petdex-desktop-native-${{ matrix.target }}.zip"
 
