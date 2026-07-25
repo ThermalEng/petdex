@@ -421,13 +421,13 @@ fn postLocalhost(path: []const u8, body: []const u8, token: []const u8) void {
     defer scope.deinit();
     const io = scope.io();
     const addr: std.Io.net.IpAddress = .{ .ip4 = .loopback(7777) };
-    // Same 300ms bound the SO_RCVTIMEO/SO_SNDTIMEO pair enforced: this
-    // runs on the agent's hot path and must never hang it.
-    var stream = addr.connect(io, .{
-        .mode = .stream,
-        .protocol = .tcp,
-        .timeout = .{ .duration = .fromMilliseconds(300) },
-    }) catch return;
+    // No .timeout here: Zig 0.16 panics on it (netConnectIpPosix and
+    // netConnectIpWindows are both "TODO implement ... with timeout"),
+    // and a panic in the runner is the one thing this binary must never
+    // do to an agent. The old 300ms SO_RCVTIMEO/SO_SNDTIMEO bound is
+    // therefore gone; the target is loopback, so connect either wins
+    // immediately or fails with connection refused when no app listens.
+    var stream = addr.connect(io, .{ .mode = .stream, .protocol = .tcp }) catch return;
     defer stream.close(io);
     var req_buf: [1600]u8 = undefined;
     const req = std.fmt.bufPrint(&req_buf, "POST {s} HTTP/1.1\r\nhost: 127.0.0.1\r\nx-petdex-update-token: {s}\r\ncontent-type: application/json\r\ncontent-length: {d}\r\nconnection: close\r\n\r\n{s}", .{ path, token, body.len, body }) catch return;
@@ -440,7 +440,7 @@ fn postLocalhost(path: []const u8, body: []const u8, token: []const u8) void {
     var read_buf: [256]u8 = undefined;
     var reader = stream.reader(io, &read_buf);
     var resp: [256]u8 = undefined;
-    _ = reader.interface().readSliceShort(&resp) catch {};
+    _ = reader.interface.readSliceShort(&resp) catch {};
 }
 
 // ------------------------------------------------------------ parity

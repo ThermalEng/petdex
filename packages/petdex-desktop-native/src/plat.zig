@@ -233,6 +233,41 @@ pub fn fillRandom(out: []u8) !void {
 
 // ---------------------------------------------------------------- process
 
+/// Absolute path of the running binary. Replaces realpath(argv0),
+/// which lied whenever argv0 was a bare name found on PATH.
+pub fn executablePath(buf: []u8) ?[]const u8 {
+    var scope = Scope.init();
+    defer scope.deinit();
+    const len = std.process.executablePath(scope.io(), buf) catch return null;
+    return buf[0..len];
+}
+
+/// Point `link` at `target`, replacing any existing link.
+///
+/// Windows caveat: creating a symlink needs either Developer Mode or
+/// SeCreateSymbolicLinkPrivilege, so this can fail on a default
+/// install. The caller treats failure as "hooks not wired" rather than
+/// crashing, and the hook command already exits 0 when the link is
+/// missing, so the app degrades to no bubbles instead of breaking.
+pub fn replaceSymlink(target: []const u8, link: []const u8) bool {
+    var scope = Scope.init();
+    defer scope.deinit();
+    const io = scope.io();
+    const cwd = std.Io.Dir.cwd();
+    cwd.deleteFile(io, link) catch {};
+    cwd.symLink(io, target, link, .{}) catch return false;
+    return true;
+}
+
+/// Own pid, for the /whoami endpoint. std has no portable accessor in
+/// 0.16, so this is the one genuine per-platform branch in this file.
+pub fn processId() u32 {
+    return switch (builtin.os.tag) {
+        .windows => std.os.windows.GetCurrentProcessId(),
+        else => @intCast(std.c.getpid()),
+    };
+}
+
 /// Open a URL or a folder in the desktop's default handler. One
 /// spawn, no shell, so a path with quotes cannot become an argument
 /// injection the way the old `system()` string could.

@@ -355,7 +355,6 @@ fn uninstallJsonHooks(allocator: std.mem.Allocator, path: []const u8) bool {
 
 pub fn uninstall(allocator: std.mem.Allocator, home: []const u8, kind: AgentKind) bool {
     var path_buf: [512]u8 = undefined;
-    var z: [512]u8 = undefined;
     switch (kind) {
         .claude_code => {
             const path = std.fmt.bufPrint(&path_buf, "{s}/.claude/settings.json", .{home}) catch return false;

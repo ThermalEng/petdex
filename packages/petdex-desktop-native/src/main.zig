@@ -1601,7 +1601,11 @@ pub fn main(init: std.process.Init) !void {
     env_home = init.environ_map.get("HOME");
     // Hook hot path: `<binary> bubble <phase> [agent]` runs the
     // in-binary runner and exits before any UI machinery spins up.
-    var args_it = std.process.Args.Iterator.init(init.minimal.args);
+    // initAllocator, not init: on Windows the command line arrives as
+    // one UTF-16 string that has to be split and transcoded, so the
+    // iterator needs an allocator there. It is a no-op elsewhere.
+    var args_it = std.process.Args.Iterator.initAllocator(init.minimal.args, boot_allocator) catch return;
+    defer args_it.deinit();
     const argv0: ?[]const u8 = args_it.next();
     if (args_it.next()) |cmd| {
         if (std.mem.eql(u8, cmd, "bubble")) {
