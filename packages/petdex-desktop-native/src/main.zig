@@ -437,34 +437,6 @@ fn settingsPath(buf: []u8) ?[]const u8 {
     return std.fmt.bufPrint(buf, "{s}/.petdex/desktop-native-settings.json", .{home}) catch null;
 }
 
-/// Bundled assets resolved against the executable, never the cwd.
-/// `open`ing a .app launches it with cwd `/`, so a relative
-/// "assets/agents/x.png" resolves to "/assets/..." and every icon
-/// silently falls through its `continue` — which is how the settings
-/// agent rows shipped without logos. Packaging puts the tree in
-/// Contents/Resources while `zig build` leaves it beside the binary,
-/// so both layouts are probed.
-fn assetPath(buf: []u8, comptime fmt: []const u8, args: anytype) ?[]const u8 {
-    var rel_buf: [128]u8 = undefined;
-    const rel = std.fmt.bufPrint(&rel_buf, fmt, args) catch return null;
-    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    var size: u32 = exe_buf.len;
-    if (std.c._NSGetExecutablePath(&exe_buf, &size) != 0) return null;
-    const exe = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&exe_buf)), 0);
-    const bin_dir = std.fs.path.dirname(exe) orelse return null;
-    var probe: [1]u8 = undefined;
-    // Packaged: Contents/MacOS/<bin> -> Contents/Resources/assets/...
-    if (std.fs.path.dirname(bin_dir)) |contents| {
-        if (std.fmt.bufPrint(buf, "{s}/Resources/{s}", .{ contents, rel })) |packaged| {
-            if (cReadFile(packaged, &probe) != null) return packaged;
-        } else |_| {}
-    }
-    // zig build output: the assets tree sits next to the binary.
-    const beside = std.fmt.bufPrint(buf, "{s}/{s}", .{ bin_dir, rel }) catch return null;
-    if (cReadFile(beside, &probe) != null) return beside;
-    return null;
-}
-
 /// Tiny std.c file helpers usable from the runtime thread (std.Io
 /// stays on the main thread; these mirror hook_server's).
 fn cReadFile(path: []const u8, buf: []u8) ?[]const u8 {
@@ -578,31 +550,26 @@ const agent_icon_px: usize = 40;
 var agents_icons_ready: bool = false;
 var agents_icons_dark: bool = false;
 
+/// Agent logo bytes, compiled in. The runtime decodes them through the
+/// platform codec (CGImageSource, gdk-pixbuf, WIC), so these need no
+/// file lookup and no macOS-only `sips` shim — which also means they
+/// cannot go missing from a bundle or resolve against the wrong cwd.
+/// opencode ships light and dark glyphs; the rest read on both.
+const AgentArt = struct { light: []const u8, dark: []const u8 };
+const agent_art = [agent_hooks.agent_count]AgentArt{
+    .{ .light = @embedFile("assets/agents/claude-code.png"), .dark = @embedFile("assets/agents/claude-code.png") },
+    .{ .light = @embedFile("assets/agents/codex.png"), .dark = @embedFile("assets/agents/codex.png") },
+    .{ .light = @embedFile("assets/agents/gemini.png"), .dark = @embedFile("assets/agents/gemini.png") },
+    .{ .light = @embedFile("assets/agents/opencode-light.png"), .dark = @embedFile("assets/agents/opencode-dark.png") },
+};
+const agent_fallback_art: []const u8 = @embedFile("assets/agents/fallback.png");
+
 /// Register the four settings agent logos, one registry slot each,
 /// themed like the bubble avatar and refreshed on appearance flips.
 fn loadAgentsAtlas(dark: bool, fx: *Effects) void {
     if (agents_icons_ready and agents_icons_dark == dark) return;
-    const kinds = [_]agent_hooks.AgentKind{ .claude_code, .codex, .gemini, .opencode };
-    for (kinds, 0..) |kind, cell| {
-        const name = kind.hookAgentName();
-        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        var probe: [1]u8 = undefined;
-        const png_path = assetPath(&path_buf, "assets/agents/{s}-{s}.png", .{ name, if (dark) "dark" else "light" }) orelse
-            assetPath(&path_buf, "assets/agents/{s}.png", .{name}) orelse continue;
-        if (cReadFile(png_path, &probe) == null) continue;
-        var tga_buf: [128]u8 = undefined;
-        var cmd_buf: [512]u8 = undefined;
-        const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-agenticon-{s}-{s}.tga", .{ name, if (dark) "d" else "l" }) catch continue;
-        if (cReadFile(tga_path, &probe) == null) {
-            const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}' --out '{s}' >/dev/null 2>&1", .{ png_path, tga_path }) catch continue;
-            _ = system(cmd);
-            if (cReadFile(tga_path, &probe) == null) continue;
-        }
-        var heap: [32 * 1024]u8 = undefined;
-        const bytes = cReadFile(tga_path, &heap) orelse continue;
-        const parsed = parseTga(boot_allocator, bytes) catch continue;
-        defer boot_allocator.free(parsed.pixels);
-        fx.registerImage(agent_icon_ids[cell], parsed.width, parsed.height, parsed.pixels) catch continue;
+    for (agent_art, 0..) |art, cell| {
+        _ = fx.registerImageBytes(agent_icon_ids[cell], if (dark) art.dark else art.light) catch continue;
     }
     agents_icons_dark = dark;
     agents_icons_ready = true;
@@ -650,34 +617,23 @@ var avatar_agent_len: usize = 0;
 var avatar_ready: bool = false;
 var avatar_theme_dark: bool = false;
 
+/// The bubble names its agent at runtime (a hook payload), so the art
+/// is looked up by name rather than by enum. An unknown name is the
+/// normal case for an agent we do not ship a glyph for, not an error.
+fn agentArtBytes(agent: []const u8, dark: bool) []const u8 {
+    for (std.enums.values(agent_hooks.AgentKind)) |kind| {
+        if (std.mem.eql(u8, kind.hookAgentName(), agent)) {
+            const art = agent_art[@intFromEnum(kind)];
+            return if (dark) art.dark else art.light;
+        }
+    }
+    return agent_fallback_art;
+}
+
 fn loadAgentAvatar(agent: []const u8, dark: bool, fx: *Effects) void {
     if (avatar_ready and avatar_theme_dark == dark and std.mem.eql(u8, avatar_agent[0..avatar_agent_len], agent)) return;
-    var safe = true;
-    for (agent) |c| {
-        if (!((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-')) safe = false;
-    }
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    var probe: [1]u8 = undefined;
-    const name = if (safe and agent.len > 0) agent else "fallback";
-    // Themed variant first (opencode ships light/dark glyphs), then
-    // the plain file, then the generic fallback.
-    const png_path = assetPath(&path_buf, "assets/agents/{s}-{s}.png", .{ name, if (dark) "dark" else "light" }) orelse
-        assetPath(&path_buf, "assets/agents/{s}.png", .{name}) orelse
-        assetPath(&path_buf, "assets/agents/fallback.png", .{}) orelse return;
-    if (cReadFile(png_path, &probe) == null) return;
-    var tga_buf: [128]u8 = undefined;
-    var cmd_buf: [512]u8 = undefined;
-    const tga_path = std.fmt.bufPrint(&tga_buf, "/tmp/petdex-native-avatar-{s}-{s}.tga", .{ name, if (dark) "d" else "l" }) catch return;
-    if (cReadFile(tga_path, &probe) == null) {
-        const cmd = std.fmt.bufPrintZ(&cmd_buf, "/usr/bin/sips -s format tga '{s}' --out '{s}' >/dev/null 2>&1", .{ png_path, tga_path }) catch return;
-        _ = system(cmd);
-        if (cReadFile(tga_path, &probe) == null) return;
-    }
-    var heap: [32 * 1024]u8 = undefined;
-    const bytes = cReadFile(tga_path, &heap) orelse return;
-    const parsed = parseTga(boot_allocator, bytes) catch return;
-    defer boot_allocator.free(parsed.pixels);
-    fx.registerImage(avatar_image_id, parsed.width, parsed.height, parsed.pixels) catch return;
+    if (agent.len > avatar_agent.len) return;
+    _ = fx.registerImageBytes(avatar_image_id, agentArtBytes(agent, dark)) catch return;
     @memcpy(avatar_agent[0..agent.len], agent);
     avatar_agent_len = agent.len;
     avatar_theme_dark = dark;
