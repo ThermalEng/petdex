@@ -19,6 +19,7 @@ const native_sdk = @import("native_sdk");
 const hook_server = @import("hook_server.zig");
 const hook_runner = @import("hook_runner.zig");
 const agent_hooks = @import("agent_hooks.zig");
+const plat = @import("plat.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 
@@ -367,36 +368,13 @@ fn settingsPath(buf: []u8) ?[]const u8 {
     return std.fmt.bufPrint(buf, "{s}/.petdex/desktop-native-settings.json", .{home}) catch null;
 }
 
-/// Tiny std.c file helpers usable from the runtime thread (std.Io
-/// stays on the main thread; these mirror hook_server's).
-fn cReadFile(path: []const u8, buf: []u8) ?[]const u8 {
-    var path_buf: [512]u8 = undefined;
-    const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path}) catch return null;
-    const fd = std.c.open(path_z, .{ .ACCMODE = .RDONLY });
-    if (fd < 0) return null;
-    defer _ = std.c.close(fd);
-    var total: usize = 0;
-    while (total < buf.len) {
-        const n = std.c.read(fd, buf[total..].ptr, buf.len - total);
-        if (n <= 0) break;
-        total += @intCast(n);
-    }
-    if (total == 0) return null;
-    return buf[0..total];
-}
+/// Tiny file helpers usable from the runtime thread. They carry their
+/// own Io (see plat.zig), so the main thread's never leaks off-thread;
+/// the invariant is enforced by the type now, not by this comment.
+const cReadFile = plat.readFile;
 
 fn cWriteFile(path: []const u8, bytes: []const u8) void {
-    var path_buf: [512]u8 = undefined;
-    const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path}) catch return;
-    const fd = std.c.open(path_z, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
-    if (fd < 0) return;
-    defer _ = std.c.close(fd);
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const n = std.c.write(fd, bytes.ptr + off, bytes.len - off);
-        if (n <= 0) return;
-        off += @intCast(n);
-    }
+    _ = plat.writeFile(path, bytes);
 }
 
 fn saveSettings(model: *const Model) void {
@@ -757,18 +735,41 @@ pub fn boot(model: *Model, fx: *Effects) void {
         .mode = .repeating,
         .on_fire = Effects.timerMsg(.poll_tick),
     });
-    // First point where the platform codec is reachable: `init_fx` runs
-    // on the loop thread right after the runtime binds services onto fx.
-    if (catalog_len == 0) return;
-    if (!loadSheetForPet(fx, &catalog[initial_pet])) {
-        std.debug.print("petdex: sheet decode failed; install a pet with `petdex install <pet>`\n", .{});
-        return;
-    }
+    // Settings and agent state are independent of whether any sheet
+    // decodes, so they land before the catalog work: a corrupt pet must
+    // not cost the user their scale, their bubble preference, or the
+    // Agents section.
     model.scale = initial_scale;
     model.bubbles_enabled = initial_bubbles;
     model.agents_prompted = initial_agents_prompted;
     if (env_home) |home| model.agents = agent_hooks.scan(boot_allocator, home);
-    model.active_pet = initial_pet;
+
+    // First point where the platform codec is reachable: `init_fx` runs
+    // on the loop thread right after the runtime binds services onto fx.
+    if (catalog_len == 0) return;
+    // A single unreadable sheet used to leave an empty window even with
+    // a full catalog behind it (one shipped pet is a 3-byte stub), so
+    // the chosen pet is a preference here, not a requirement.
+    var chosen: ?usize = null;
+    for (0..catalog_len) |offset| {
+        const index = (initial_pet + offset) % catalog_len;
+        if (loadSheetForPet(fx, &catalog[index])) {
+            chosen = index;
+            break;
+        }
+    }
+    const active = chosen orelse {
+        std.debug.print("petdex: no installed pet decoded; install one with `petdex install <pet>`\n", .{});
+        return;
+    };
+    if (active != initial_pet) {
+        std.debug.print("petdex: pet {s} failed to decode, fell back to {s}\n", .{ catalog[initial_pet].slice(), catalog[active].slice() });
+    }
+    model.active_pet = @intCast(active);
+    // The name was resolved alongside the preferred pet, so a fallback
+    // has to re-point it or the window would label the pet it could not
+    // draw.
+    pet_display_name = catalog[active].slice();
     registerStateFrames(model.state, fx);
     model.sheet_loaded = true;
     const n = @min(pet_display_name.len, model.pet_name.len);
@@ -909,8 +910,8 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .open_pet_page => |index| {
             if (index >= catalog_len) return;
             var buf: [256]u8 = undefined;
-            const cmd = std.fmt.bufPrintZ(&buf, "/usr/bin/open 'https://petdex.dev/pets/{s}'", .{catalog[index].slice()}) catch return;
-            _ = system(cmd);
+            const url = std.fmt.bufPrint(&buf, "https://petdex.dev/pets/{s}", .{catalog[index].slice()}) catch return;
+            plat.openExternal(url);
         },
         .appearance => |a| {
             model.dark = a.color_scheme == .dark;
@@ -926,8 +927,8 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .open_pets_folder => {
             if (env_home) |home| {
                 var buf: [512]u8 = undefined;
-                const cmd = std.fmt.bufPrintZ(&buf, "/usr/bin/open '{s}/.petdex/pets'", .{home}) catch return;
-                _ = system(cmd);
+                const dir = std.fmt.bufPrint(&buf, "{s}/.petdex/pets", .{home}) catch return;
+                plat.openExternal(dir);
             }
         },
         .frame_clock => {
@@ -1571,18 +1572,16 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
 /// agent hooks survive app updates: the hooks reference the stable
 /// symlink, the app re-aims it every boot.
 fn refreshHookSymlink(argv0: []const u8) void {
+    _ = argv0;
     const home = env_home orelse return;
-    var argv0_z: [1024]u8 = undefined;
-    const az = std.fmt.bufPrintZ(&argv0_z, "{s}", .{argv0}) catch return;
     var self_buf: [1024]u8 = undefined;
-    const rp = std.c.realpath(az, &self_buf) orelse return;
-    var dir_z: [512]u8 = undefined;
-    const bin = std.fmt.bufPrintZ(&dir_z, "{s}/.petdex/bin", .{home}) catch return;
-    _ = std.c.mkdir(bin, 0o755);
-    var link_z: [512]u8 = undefined;
-    const link = std.fmt.bufPrintZ(&link_z, "{s}/.petdex/bin/petdex-hook", .{home}) catch return;
-    _ = std.c.unlink(link);
-    _ = std.c.symlink(rp, link);
+    const rp = plat.executablePath(&self_buf) orelse return;
+    var dir_buf: [512]u8 = undefined;
+    const bin = std.fmt.bufPrint(&dir_buf, "{s}/.petdex/bin", .{home}) catch return;
+    plat.makeDir(bin);
+    var link_buf: [512]u8 = undefined;
+    const link = std.fmt.bufPrint(&link_buf, "{s}/.petdex/bin/petdex-hook", .{home}) catch return;
+    _ = plat.replaceSymlink(rp, link);
 }
 
 // -------------------------------------------------------------------- app
