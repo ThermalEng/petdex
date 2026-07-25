@@ -79,6 +79,82 @@ jobs:
           name: petdex-desktop-${{ matrix.target }}
           path: packages/petdex-desktop/petdex-desktop-${{ matrix.target }}
 
+  build-native:
+    name: build native ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+
+    steps:
+      - name: Checkout petdex
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Clone the Native SDK
+        # petdex-desktop-native needs the floating/transparent/click_through
+        # window options and fx.focusWindow, none of which are in
+        # vercel-labs/main yet. Pinned by commit for the same reason the
+        # zero-native clone above is: a mutable fork branch must not be able
+        # to change what a tagged release contains. Point NATIVE_SDK_REMOTE
+        # and NATIVE_SDK_REF at vercel-labs/main once those land upstream.
+        env:
+          NATIVE_SDK_REMOTE: "https://github.com/Railly/native.git"
+          NATIVE_SDK_BRANCH: "feat/floating-window-0.5.3"
+          NATIVE_SDK_REF: "b414704da8ff1aa3b9caa11d4db6a72eca47f717"
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$NATIVE_SDK_BRANCH" "$NATIVE_SDK_REMOTE" "$GITHUB_WORKSPACE/native-sdk"
+          git -C "$GITHUB_WORKSPACE/native-sdk" fetch --depth 1 origin "$NATIVE_SDK_REF"
+          git -C "$GITHUB_WORKSPACE/native-sdk" checkout --detach "$NATIVE_SDK_REF"
+          echo "NATIVE_SDK_PATH=$GITHUB_WORKSPACE/native-sdk" >> "$GITHUB_ENV"
+
+      - name: Install Zig 0.16.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+
+      - name: Build the native CLI from the pinned SDK
+        # The published @native-sdk/cli carries its own manifest parser, and
+        # the released one rejects app.zon's `.floating` with a bare
+        # ParseZon. Building the CLI from the same commit as the SDK keeps
+        # the parser and the runtime in step.
+        working-directory: ${{ env.NATIVE_SDK_PATH }}
+        run: |
+          zig build cli
+          echo "NATIVE_CLI=$NATIVE_SDK_PATH/zig-out/bin/native" >> "$GITHUB_ENV"
+
+      - name: Build petdex-desktop-native
+        working-directory: packages/petdex-desktop-native
+        run: |
+          "$NATIVE_CLI" build
+          ls -lh zig-out/bin/petdex-desktop-native
+
+      - name: Package the app bundle
+        working-directory: packages/petdex-desktop-native
+        run: |
+          "$NATIVE_CLI" package \
+            --target macos \
+            --binary zig-out/bin/petdex-desktop-native \
+            --output "Petdex.app" \
+            --signing adhoc
+          # The agent logos and the pet atlas are read from
+          # Contents/Resources at runtime, so a bundle that lost them
+          # launches with blank rows instead of failing loudly.
+          test -f "Petdex.app/Contents/Resources/assets/agents/claude-code.png"
+          ditto -c -k --keepParent "Petdex.app" "petdex-desktop-native-${{ matrix.target }}.zip"
+          ls -lh "petdex-desktop-native-${{ matrix.target }}.zip"
+
+      - name: Upload native bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: petdex-desktop-native-${{ matrix.target }}
+          path: packages/petdex-desktop-native/petdex-desktop-native-${{ matrix.target }}.zip
+
   sidecar:
     name: build sidecar (server.js)
     runs-on: ubuntu-latest
@@ -152,7 +228,7 @@ jobs:
 
   release:
     name: publish github release
-    needs: [build, build-windows, sidecar]
+    needs: [build, build-native, build-windows, sidecar]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -178,6 +254,7 @@ jobs:
           test -f release/petdex-desktop-darwin-arm64
           test -f release/petdex-desktop-darwin-x64
           test -f release/petdex-desktop-win32-x64.exe
+          test -f release/petdex-desktop-native-darwin-arm64.zip
           ls -lh release/
 
       - name: Create GitHub Release
