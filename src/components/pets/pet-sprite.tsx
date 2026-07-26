@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, memo } from "react";
+import { type CSSProperties, memo, useState } from "react";
 
 import { type PetStateId, petStates } from "@/lib/pet-states";
 
@@ -31,19 +31,34 @@ type PetSpriteProps = {
    * sites. Has no effect since the cycling interval no longer exists.
    */
   cycleIntervalMs?: number;
+  /**
+   * Atlas spritesheet to fall back to when `src` fails to load. Derived
+   * previews (preview.webp) are published out-of-band and can be missing
+   * for a pet (#579); a CSS background 404s silently, so a hidden <img>
+   * on the same URL detects the failure and swaps to the atlas instead
+   * of leaving the card blank. The probe shares the browser cache with
+   * the background fetch, so the happy path costs no extra request.
+   */
+  fallbackSrc?: string;
 };
 
 const ATLAS_SHEET_WIDTH = 1536;
 
 function PetSpriteImpl({
-  src,
+  src: preferredSrc,
   state = "idle",
   scale = 1,
   label,
   className = "",
-  layout = "atlas",
+  layout: preferredLayout = "atlas",
   cycleStates = false,
+  fallbackSrc,
 }: PetSpriteProps) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const useFallback = fallbackSrc != null && failedSrc === preferredSrc;
+  const src = useFallback ? fallbackSrc : preferredSrc;
+  const layout = useFallback ? "atlas" : preferredLayout;
+
   const fixedAnimation =
     petStates.find((item) => item.id === state) ?? petStates[0];
   const animation = cycleStates
@@ -81,6 +96,16 @@ function PetSpriteImpl({
           } as CSSProperties
         }
       />
+      {fallbackSrc != null && !useFallback ? (
+        // biome-ignore lint/performance/noImgElement: invisible 404 probe on the raw preview URL; next/image would rewrite the URL and hide the failure
+        <img
+          src={preferredSrc}
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute h-px w-px opacity-0"
+          onError={() => setFailedSrc(preferredSrc)}
+        />
+      ) : null}
     </div>
   );
 }

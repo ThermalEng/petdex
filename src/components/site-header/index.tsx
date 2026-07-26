@@ -1,11 +1,11 @@
-import Image from "next/image";
-import Link from "next/link";
-
 import { getLocale, getTranslations } from "next-intl/server";
 
 import { withLocale } from "@/lib/locale-routing";
 
 import { AuthBadge } from "@/components/auth/auth-badge";
+import { LocaleSwitcher } from "@/components/brand/locale-switcher";
+import { PetdexLogo } from "@/components/brand/petdex-logo";
+import { ThemeToggle } from "@/components/brand/theme-toggle";
 import { DesktopNav } from "@/components/site-header/desktop-nav";
 import { GithubLink } from "@/components/site-header/github-link";
 import { MobileNav } from "@/components/site-header/mobile-nav";
@@ -36,34 +36,30 @@ export async function SiteHeader({ hideSubmitCta = false }: SiteHeaderProps) {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-foreground/[0.06] bg-background/88 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
-      <nav className="mx-auto flex h-14 w-full max-w-[1440px] items-center justify-between gap-3 px-4 sm:px-5 md:px-8">
-        <div className="flex min-w-0 items-center gap-3 lg:gap-5">
-          <Link
+      <nav className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-3 px-4 py-3 sm:px-5 md:px-8">
+        <div className="flex min-w-0 items-center gap-4 lg:gap-7">
+          <PetdexLogo
             href={href("/")}
-            prefetch={false}
-            aria-label={common("petdexHome")}
-            className="inline-flex items-center gap-2 text-foreground"
-          >
-            <Image
-              src="/brand/petdex-app-icon.png"
-              alt=""
-              width={28}
-              height={28}
-              className="size-7"
-              priority
-            />
-            <span className="hidden text-[15px] font-semibold sm:inline">
-              Petdex
-            </span>
-          </Link>
+            ariaLabel={common("petdexHome")}
+            markClassName="size-8 sm:size-9"
+            className="gap-2 sm:gap-3 [&>span]:hidden sm:[&>span]:inline sm:[&>span]:text-lg"
+          />
           <DesktopNav
             primary={nav.primary}
             secondary={nav.secondary}
-            moreLabel={t("explore")}
+            moreLabel={t("more")}
           />
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden items-center gap-2 xl:flex">
+            <ThemeToggle />
+            <LocaleSwitcher />
+          </div>
+          <span
+            aria-hidden="true"
+            className="mx-1 hidden h-5 w-px bg-border-base xl:block"
+          />
           <GithubLink item={nav.githubItem} />
           {hideSubmitCta ? null : (
             <SubmitLink
