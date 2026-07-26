@@ -84,6 +84,7 @@ export function CollectionCover({
         <PetSprite
           src={previewSrc ?? pet.spritesheetPath}
           layout={previewSrc ? "row" : "atlas"}
+          fallbackSrc={previewSrc ? pet.spritesheetPath : undefined}
           state="idle"
           cycleStates={!previewSrc}
           scale={scale * 1.5}
@@ -189,6 +190,7 @@ export function CollectionCover({
             <PetSprite
               src={previewSrc ?? pet.spritesheetPath}
               layout={previewSrc ? "row" : "atlas"}
+              fallbackSrc={previewSrc ? pet.spritesheetPath : undefined}
               state="idle"
               cycleStates={!previewSrc}
               scale={petScale}

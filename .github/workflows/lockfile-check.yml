@@ -1,0 +1,37 @@
+name: lockfile-check
+
+# Fails any PR that changes package.json without updating bun.lock.
+# Dependabot bumps #538/#552 landed with only package.json changes, which
+# broke every scheduled job that installs with --frozen-lockfile
+# (preview-snapshot, manifest-snapshot) for days — the dead preview
+# backfill is what left profile cards pointing at 404 previews (#579).
+# This check surfaces the drift at PR time instead.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lockfile-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frozen-install:
+    name: bun install --frozen-lockfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install with frozen lockfile
+        run: bun install --frozen-lockfile

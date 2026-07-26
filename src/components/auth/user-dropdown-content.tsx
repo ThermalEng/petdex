@@ -3,21 +3,19 @@
 import Link from "next/link";
 
 import {
-  GearSixIcon,
-  IdentificationCardIcon,
-  InfoIcon,
-  ShieldCheckIcon,
-  ShieldWarningIcon,
-  SignOutIcon,
-} from "@phosphor-icons/react";
-import { ChatCircleDotsIcon } from "@phosphor-icons/react/dist/ssr";
-import { ExternalLink } from "lucide-react";
+  ExternalLink,
+  Info,
+  LogOut,
+  MessageCircleMore,
+  Settings,
+  ShieldAlert,
+  ShieldCheck,
+  UserRound,
+} from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 
 import { withLocale } from "@/lib/locale-routing";
 
-import { LocaleSwitcher } from "@/components/brand/locale-switcher";
-import { ThemeToggle } from "@/components/brand/theme-toggle";
 import {
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -74,13 +72,13 @@ export function UserDropdownContent({
         <DropdownMenuItem
           render={<Link href={`/u/${handle}`} prefetch={false} />}
         >
-          <IdentificationCardIcon weight="duotone" className="size-4" />
+          <UserRound className="size-4 text-muted-3" />
           {t("myProfile")}
         </DropdownMenuItem>
         <DropdownMenuItem
           render={<Link href="/my-feedback" prefetch={false} />}
         >
-          <ChatCircleDotsIcon weight="duotone" className="size-4" />
+          <MessageCircleMore className="size-4 text-muted-3" />
           {t("myFeedback")}
           {unread > 0 ? (
             <span className="ml-auto rounded-full bg-brand-tint px-1.5 py-0.5 font-mono text-[9px] font-semibold text-brand dark:bg-brand-tint-dark">
@@ -90,7 +88,7 @@ export function UserDropdownContent({
         </DropdownMenuItem>
         {showAdmin ? (
           <DropdownMenuItem render={<Link href={adminHref} prefetch={false} />}>
-            <ShieldCheckIcon weight="duotone" className="size-4" />
+            <ShieldCheck className="size-4 text-muted-3" />
             {t("admin")}
           </DropdownMenuItem>
         ) : null}
@@ -102,13 +100,13 @@ export function UserDropdownContent({
         <DropdownMenuItem
           render={<Link href={href("/about")} prefetch={false} />}
         >
-          <InfoIcon weight="duotone" className="size-4" />
+          <Info className="size-4 text-muted-3" />
           {t("about")}
         </DropdownMenuItem>
         <DropdownMenuItem
           render={<Link href={href("/legal/takedown")} prefetch={false} />}
         >
-          <ShieldWarningIcon weight="duotone" className="size-4" />
+          <ShieldAlert className="size-4 text-muted-3" />
           {t("takedown")}
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -132,24 +130,12 @@ export function UserDropdownContent({
       <DropdownMenuSeparator />
 
       <DropdownMenuGroup>
-        <DropdownMenuLabel className="px-3 pt-1 pb-1.5 font-mono text-[10px] tracking-[0.18em] text-muted-3 uppercase">
-          {t("settings")}
-        </DropdownMenuLabel>
-        <div className="flex items-center gap-2 px-2 pb-1">
-          <ThemeToggle />
-          <LocaleSwitcher />
-        </div>
-      </DropdownMenuGroup>
-
-      <DropdownMenuSeparator />
-
-      <DropdownMenuGroup>
         <DropdownMenuItem onClick={onManageAccount}>
-          <GearSixIcon weight="duotone" className="size-4" />
+          <Settings className="size-4 text-muted-3" />
           {t("manageAccount")}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onSignOut}>
-          <SignOutIcon weight="duotone" className="size-4" />
+          <LogOut className="size-4 text-muted-3" />
           {t("signOut")}
         </DropdownMenuItem>
       </DropdownMenuGroup>

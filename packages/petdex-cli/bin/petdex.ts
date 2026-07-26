@@ -7,6 +7,7 @@ import * as p from "@clack/prompts";
 import JSZip from "jszip";
 import pc from "picocolors";
 
+import pkg from "../package.json";
 import { ClerkCliAuth } from "../src/cli-auth/index.js";
 import { runDoctor } from "../src/desktop/doctor.js";
 import {
@@ -36,7 +37,6 @@ import {
   toggleKillswitch,
 } from "../src/hooks/killswitch.js";
 import { runUninstall as runHooksUninstall } from "../src/hooks/uninstall.js";
-import pkg from "../package.json";
 import {
   emit,
   getStatus,
