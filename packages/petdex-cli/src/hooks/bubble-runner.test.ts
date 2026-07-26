@@ -1,15 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 
 import {
-  eventFromArgs, stateForEvent,
-  clipTitle,
   clipPreview,
+  clipTitle,
+  eventFromArgs,
   lastAssistantText,
   pruneSessions,
   rememberSessionTitle,
   sessionTitle,
+  stateForEvent,
 } from "./bubble-runner";
-import { mkdirSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 
 describe("eventFromArgs - session-level", () => {
   test("stop returns session.end", () => {
@@ -140,7 +141,6 @@ describe("stateForEvent", () => {
   });
 });
 
-
 describe("session titles", () => {
   test("remember then read round-trips a clipped title", () => {
     const dir = `${process.env.TMPDIR ?? "/tmp"}/petdex-title-test-${Date.now()}`;
@@ -160,7 +160,6 @@ describe("session titles", () => {
     expect(clipped.endsWith("…")).toBe(true);
   });
 });
-
 
 describe("close-of-turn preview", () => {
   test("extracts the newest assistant text from a transcript tail", () => {

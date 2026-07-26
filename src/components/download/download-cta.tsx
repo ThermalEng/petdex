@@ -15,6 +15,7 @@ import { CommandLine } from "@/components/download/command-line";
 
 const MACOS_ARM64_URL = "/api/desktop/latest-release?asset=darwin-arm64";
 const MACOS_X64_URL = "/api/desktop/latest-release?asset=darwin-x64";
+const WINDOWS_X64_URL = "/api/desktop/latest-release?asset=win32-x64";
 
 /**
  * The hero-row "Download for macOS" + CLI install CTA, rendered
@@ -154,18 +155,32 @@ function ManualDownloadButton({
     );
   }
 
-  // Linux / Windows — binary not yet self-contained (sidecar bundling pending).
-  if (platform === "linux" || platform === "windows") {
+  // Windows ships a real binary in every desktop release, so it gets the
+  // same direct download macOS does.
+  if (platform === "windows") {
+    return (
+      <a
+        href={WINDOWS_X64_URL}
+        rel="noreferrer"
+        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-border-base bg-surface px-4 text-sm font-medium text-foreground transition hover:border-border-strong hover:bg-surface-muted sm:w-auto sm:min-w-[220px]"
+      >
+        <ArrowDownToLine className="size-4" />
+        {manualLabel}
+      </a>
+    );
+  }
+
+  // Linux has no published binary yet: the app builds and runs there,
+  // but no release job produces the artifact, so offering a button
+  // would dead-end on a 404.
+  if (platform === "linux") {
     return (
       <span
         aria-disabled="true"
         className="inline-flex h-11 w-full cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-border-base bg-surface-muted px-4 text-sm font-medium text-muted-2 sm:w-auto sm:min-w-[220px]"
       >
         <Clock className="size-4" />
-        {comingSoonLabel.replace(
-          "{os}",
-          platform === "windows" ? "Windows" : "Linux",
-        )}
+        {comingSoonLabel.replace("{os}", "Linux")}
       </span>
     );
   }

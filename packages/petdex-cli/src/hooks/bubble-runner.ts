@@ -22,9 +22,9 @@ import {
   fstatSync,
   mkdirSync,
   openSync,
-  readSync,
   readdirSync,
   readFileSync,
+  readSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -231,6 +231,8 @@ function parseStdin(text: string): {
   agentSource: string | null;
   sessionId: string | null;
   prompt: string | null;
+  transcriptPath: string | null;
+  lastAssistantMessage: string | null;
 } {
   if (!text.trim()) {
     return {
@@ -417,7 +419,11 @@ export async function runBubble(args: string[]): Promise<void> {
       phase === "session-start" ||
       phase === "pre" ||
       phase === "post";
-    const body: Record<string, unknown> = { text, busy, agent_source: agentSource };
+    const body: Record<string, unknown> = {
+      text,
+      busy,
+      agent_source: agentSource,
+    };
     if (title) body.title = title;
     tasks.push(postJson(SIDECAR_BUBBLE_URL, body, token));
   }
