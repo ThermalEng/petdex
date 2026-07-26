@@ -105,7 +105,7 @@ jobs:
         env:
           NATIVE_SDK_REMOTE: "https://github.com/Railly/native.git"
           NATIVE_SDK_BRANCH: "feat/floating-window-0.5.3"
-          NATIVE_SDK_REF: "d62c13307e54bcea05d34a15ad8c42468080f05e"
+          NATIVE_SDK_REF: "b749ae5eb6fd759cc49871d2d00ae33d9fd05542"
         run: |
           set -euo pipefail
           git clone --depth 1 --branch "$NATIVE_SDK_BRANCH" "$NATIVE_SDK_REMOTE" "$GITHUB_WORKSPACE/native-sdk"

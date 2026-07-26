@@ -69,7 +69,7 @@ jobs:
           # by default, so every sheet in the catalog (60 of 63 are .webp)
           # fails to decode and the window comes up empty. libwebp alone is
           # not enough: that is the codec, this is the plugin that reaches it.
-          sudo apt-get install -y libgtk-4-dev pkg-config webp-pixbuf-loader
+          sudo apt-get install -y libgtk-4-dev libx11-dev pkg-config webp-pixbuf-loader
 
       - name: Clone the Native SDK
         # Pinned to the same commit desktop-release.yml uses: the
@@ -78,7 +78,7 @@ jobs:
         env:
           NATIVE_SDK_REMOTE: "https://github.com/Railly/native.git"
           NATIVE_SDK_BRANCH: "feat/floating-window-0.5.3"
-          NATIVE_SDK_REF: "d62c13307e54bcea05d34a15ad8c42468080f05e"
+          NATIVE_SDK_REF: "b749ae5eb6fd759cc49871d2d00ae33d9fd05542"
         shell: bash
         run: |
           set -euo pipefail
