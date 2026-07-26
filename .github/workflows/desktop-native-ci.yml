@@ -10,11 +10,12 @@ name: petdex-desktop-native ci
 # real hook round trip, and photograph the screen. The screenshots are
 # uploaded as artifacts because a human still has to look at them.
 #
-# Both stay continue-on-error until a run comes back green: neither has
-# ever executed this app. Windows has only been cross-compiled, which
-# proves none of its Win32 paths, and the only Linux evidence is a
-# cross-compile from macOS that died on a missing gtk4 and said nothing
-# about our code. Drop the flag per platform as each one passes.
+# All three pass now, so none of them is allowed to fail: a change that
+# breaks a platform fails this check instead of being waved through.
+# What a green Windows leg still does not prove is the desktop-session
+# behavior of its Win32 paths, since the runner has no interactive
+# desktop: topmost ordering, the black color key against real wallpaper,
+# and click-through are compile-and-launch verified only.
 
 on:
   push:
@@ -41,14 +42,14 @@ jobs:
             expected_to_fail: false
           - platform: linux
             runner: ubuntu-latest
-            expected_to_fail: true
+            expected_to_fail: false
           # A real Windows box, not a cross-compile: the Win32 paths
           # (symlink privilege, the ACL fallback for the token file,
           # `cmd /c start`) only run here, and cross-compiling proves
           # none of them.
           - platform: windows
             runner: windows-2022
-            expected_to_fail: true
+            expected_to_fail: false
 
     steps:
       - name: Checkout petdex
