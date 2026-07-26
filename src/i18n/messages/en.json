@@ -1028,7 +1028,6 @@
       "cliSubtext": "Copies the recommended terminal setup",
       "manualLabel": "Download .dmg",
       "manualSubtext": "For blocked terminals, manual macOS installs, or keeping the installer locally.",
-      "comingSoon": "Coming soon",
       "desktopOnly": "Desktop only. Visit on a Mac"
     },
     "activation": {

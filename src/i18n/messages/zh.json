@@ -1240,7 +1240,6 @@
       "manualLabel__fixme": true,
       "manualSubtext": "适用于终端受限、手动安装 macOS 应用，或需要本地保存安装包的场景。",
       "manualSubtext__fixme": true,
-      "comingSoon": "即将支持",
       "comingSoon__fixme": true,
       "desktopOnly": "仅桌面版，请用 Mac 访问",
       "desktopOnly__fixme": true

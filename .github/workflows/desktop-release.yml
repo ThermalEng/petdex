@@ -88,12 +88,27 @@ jobs:
         include:
           - target: darwin-arm64
             runner: macos-14
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: win32-x64
+            runner: windows-2022
 
     steps:
       - name: Checkout petdex
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install Linux GUI libraries
+        # gtk4 is the host toolkit and libX11 carries the floating flag
+        # (GTK4 dropped gtk_window_set_keep_above, so the window manager
+        # is told through _NET_WM_STATE_ABOVE). webp-pixbuf-loader is
+        # what lets gdk-pixbuf read a pet at all: 60 of the 63 sheets in
+        # the catalog are webp and Ubuntu ships no loader for them.
+        if: matrix.target == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libx11-dev pkg-config webp-pixbuf-loader
 
       - name: Clone the Native SDK
         # petdex-desktop-native needs the floating/transparent/click_through
@@ -124,18 +139,26 @@ jobs:
         # ParseZon. Building the CLI from the same commit as the SDK keeps
         # the parser and the runtime in step.
         working-directory: ${{ env.NATIVE_SDK_PATH }}
+        shell: bash
         run: |
           zig build cli
           echo "NATIVE_CLI=$NATIVE_SDK_PATH/zig-out/bin/native" >> "$GITHUB_ENV"
 
       - name: Build petdex-desktop-native
         working-directory: packages/petdex-desktop-native
+        shell: bash
         run: |
           "$NATIVE_CLI" build
-          ls -lh zig-out/bin/petdex-desktop-native
+          ls -lh zig-out/bin/
 
-      - name: Package the app bundle
+      - name: Package the app bundle (macOS)
+        # Only macOS gets a bundle: the .app layout is what Finder needs
+        # to treat the binary as an application. Linux and Windows ship
+        # the executable itself, which is self-contained (agent logos and
+        # the state table are compiled in).
+        if: matrix.target == 'darwin-arm64'
         working-directory: packages/petdex-desktop-native
+        shell: bash
         run: |
           "$NATIVE_CLI" package \
             --target macos \
@@ -148,11 +171,34 @@ jobs:
           ditto -c -k --keepParent "Petdex.app" "petdex-desktop-native-${{ matrix.target }}.zip"
           ls -lh "petdex-desktop-native-${{ matrix.target }}.zip"
 
+      - name: Stage the binary (Linux)
+        if: matrix.target == 'linux-x64'
+        working-directory: packages/petdex-desktop-native
+        shell: bash
+        run: |
+          cp zig-out/bin/petdex-desktop-native "petdex-desktop-native-${{ matrix.target }}"
+          chmod +x "petdex-desktop-native-${{ matrix.target }}"
+          ls -lh "petdex-desktop-native-${{ matrix.target }}"
+
+      - name: Stage the binary (Windows)
+        if: matrix.target == 'win32-x64'
+        working-directory: packages/petdex-desktop-native
+        shell: bash
+        run: |
+          cp zig-out/bin/petdex-desktop-native.exe "petdex-desktop-native-${{ matrix.target }}.exe"
+          ls -lh "petdex-desktop-native-${{ matrix.target }}.exe"
+
       - name: Upload native bundle artifact
         uses: actions/upload-artifact@v7
         with:
           name: petdex-desktop-native-${{ matrix.target }}
-          path: packages/petdex-desktop-native/petdex-desktop-native-${{ matrix.target }}.zip
+          # One glob for three shapes: a .zip on macOS, a bare ELF on
+          # Linux, an .exe on Windows. Only one exists per job.
+          path: |
+            packages/petdex-desktop-native/petdex-desktop-native-${{ matrix.target }}
+            packages/petdex-desktop-native/petdex-desktop-native-${{ matrix.target }}.zip
+            packages/petdex-desktop-native/petdex-desktop-native-${{ matrix.target }}.exe
+          if-no-files-found: error
 
   sidecar:
     name: build sidecar (server.js)
@@ -254,6 +300,8 @@ jobs:
           test -f release/petdex-desktop-darwin-x64
           test -f release/petdex-desktop-win32-x64.exe
           test -f release/petdex-desktop-native-darwin-arm64.zip
+          test -f release/petdex-desktop-native-linux-x64
+          test -f release/petdex-desktop-native-win32-x64.exe
           ls -lh release/
 
       - name: Create GitHub Release

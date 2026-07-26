@@ -1028,7 +1028,6 @@
       "cliSubtext": "Copia el setup recomendado para terminal",
       "manualLabel": "Descargar .dmg",
       "manualSubtext": "Para terminales bloqueadas, instalacion manual en macOS o guardar el instalador localmente.",
-      "comingSoon": "Proximamente",
       "desktopOnly": "Solo escritorio. Visita desde una Mac"
     },
     "activation": {
