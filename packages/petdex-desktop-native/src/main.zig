@@ -141,6 +141,8 @@ pub const Msg = union(enum) {
     pet_json_done: native_sdk.EffectExit,
     spritesheet_done: native_sdk.EffectExit,
     dismiss_install_error,
+    native_drag_started,
+    native_drag_ended,
     noop,
 
     pub const view_unbound = .{ "frame_tick", "poll_tick", "physics_tick", "frame_clock", "cycle_state" };
@@ -1356,6 +1358,15 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             model.high_contrast = a.high_contrast;
             model.reduce_motion = a.reduce_motion;
         },
+        .native_drag_started => {
+            model.throwing = false;
+            model.dragging = false;
+            model.sample_len = 0;
+            setThrowState(model, .running, fx);
+        },
+        .native_drag_ended => {
+            applyState(model, .waving, 1200, fx);
+        },
         .noop => {},
         .open_pets_folder => {
             if (env_home) |home| {
@@ -1467,12 +1478,22 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             }
             const pet_w = frame_w * model.scale;
             const pet_h = frame_h * model.scale;
-            // A visible bubble widens the same window and adds a band
-            // above the sprite. Only the centered sprite starts a drag.
-            const window_w = @max(pet_w + pet_edge_pad * 2, if (bubbleActive(model)) bubble_window_w else 0);
-            const bubble_h: f64 = if (bubbleActive(model)) bubble_window_h else 0;
-            const pet_x = read.x + (@as(f64, window_w) - pet_w) / 2.0;
-            const pet_y = read.y + bubble_h;
+            // Linux keeps the sprite in its fixed canvas while the bubble
+            // is a compositor popup. Windows/macOS retain the established
+            // single-window layout and its app-owned drag path.
+            const window_w = if (builtin.target.os.tag == .linux)
+                @as(f64, win_w)
+            else
+                @max(pet_w + pet_edge_pad * 2, if (bubbleActive(model)) bubbleWindowWidth(model) else 0);
+            const bubble_h: f64 = if (builtin.target.os.tag != .linux and bubbleActive(model))
+                bubbleWindowHeight(model)
+            else
+                0;
+            const pet_x = read.x + (window_w - pet_w) / 2.0;
+            const pet_y = if (builtin.target.os.tag == .linux)
+                read.y + @as(f64, win_h - pet_edge_pad) - pet_h
+            else
+                read.y + bubble_h;
             const inside = read.cursor_x >= pet_x and read.cursor_x <= pet_x + pet_w and
                 read.cursor_y >= pet_y and read.cursor_y <= pet_y + pet_h;
             if (read.primary_down and !model.primary_was_down and inside) {
@@ -1536,6 +1557,8 @@ pub fn onCommand(name: []const u8) ?Msg {
     if (std.mem.eql(u8, name, "petdex.cycle")) return .cycle_state;
     if (std.mem.eql(u8, name, "petdex.settings")) return .open_settings;
     if (std.mem.eql(u8, name, "petdex.close")) return .close_pet;
+    if (std.mem.eql(u8, name, "native-sdk.window-drag.begin")) return .native_drag_started;
+    if (std.mem.eql(u8, name, "native-sdk.window-drag.end")) return .native_drag_ended;
     return null;
 }
 
@@ -1550,20 +1573,42 @@ const pet_menu = [_]AppUi.ContextMenuItem{
     .{ .label = "Close Pet", .msg = .close_pet },
 };
 
-// The bubble shares the pet window so Linux never creates an immovable
-// companion toplevel. Resizing is bottom-anchored: the pet keeps its
-// screen position while this band grows upward above it.
-// Stay within the 231px startup window at normal pet scales. Linux's
-// GTK host does not expose resizeWindow, so a wider intrinsic child
-// makes GTK grow the toplevel from its left edge and can push the
-// avatar/card past the right side of a Wayland screen.
-const bubble_window_w: f32 = 220;
-const bubble_window_h: f32 = 125;
-const bubble_chars_per_line: usize = 8;
+// The bubble is a compositor-managed popup child of the pet toplevel.
+// It gets the original roomy proportions without changing the pet
+// canvas allocation or requiring application-side window following.
 const bubble_max_lines: usize = 2;
-const bubble_display_chars: usize = bubble_chars_per_line * bubble_max_lines;
-const bubble_card_pad: f32 = 12;
-const bubble_pet_gap: f32 = 12;
+const bubble_width_ratio: f32 = 2.0;
+const legacy_bubble_window_w: f32 = 220;
+const legacy_bubble_window_h: f32 = 125;
+
+fn bubbleUiScale(model: *const Model) f32 {
+    if (builtin.target.os.tag != .linux) return 1;
+    return model.scale / max_scale;
+}
+
+fn bubbleWindowWidth(model: *const Model) f32 {
+    if (builtin.target.os.tag != .linux) return legacy_bubble_window_w;
+    return frame_w * model.scale * bubble_width_ratio;
+}
+
+fn bubbleWindowHeight(model: *const Model) f32 {
+    if (builtin.target.os.tag != .linux) return legacy_bubble_window_h;
+    return @max(82, 100 * model.scale);
+}
+
+fn bubbleFontSize(model: *const Model) f32 {
+    if (builtin.target.os.tag != .linux) return 14;
+    return std.math.clamp(6 + 7.5 * model.scale, 9, 15);
+}
+
+fn bubbleCharsPerLine(model: *const Model) usize {
+    if (builtin.target.os.tag != .linux) return 8;
+    const scale = bubbleUiScale(model);
+    const chrome = (20 + 16 + 16 + 24) * scale;
+    const text_width = @max(24, bubbleWindowWidth(model) - chrome);
+    const glyph_width = bubbleFontSize(model) * 0.58;
+    return @max(3, @as(usize, @intFromFloat(@floor(text_width / glyph_width))));
+}
 
 /// Count display characters (UTF-8 sequences, not bytes).
 fn charCount(text: []const u8) usize {
@@ -1638,13 +1683,13 @@ fn bubbleActive(model: *const Model) bool {
     return model.bubbles_enabled and model.bubble.text_len > 0;
 }
 
-/// The window tracks exactly what is drawn: the sprite, plus a band
-/// above it while a bubble is showing (kept at least bubble-wide so
-/// the text can wrap like the old 190px-capped tooltip).
 fn fitWindow(model: *const Model, fx: *Effects) bool {
+    // The Linux Wayland pet keeps the fixed max-size startup canvas:
+    // changing bubble visibility must never resize or reposition it.
+    if (builtin.target.os.tag == .linux) return true;
     const pet_w = frame_w * model.scale;
-    const width = @max(pet_w + pet_edge_pad * 2, if (bubbleActive(model)) bubble_window_w else 0);
-    const height = frame_h * model.scale + pet_edge_pad + if (bubbleActive(model)) bubble_window_h else 0;
+    const width = @max(pet_w + pet_edge_pad * 2, if (bubbleActive(model)) bubbleWindowWidth(model) else 0);
+    const height = frame_h * model.scale + pet_edge_pad + if (bubbleActive(model)) bubbleWindowHeight(model) else 0;
     return fx.resizeWindow("main", width, height, .bottom_center);
 }
 
@@ -1666,14 +1711,16 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     // Linux resolves the deepest context-menu node on the right-click
     // hit route before mounting the canvas fallback menu.
     node.context_menu = &pet_menu;
-    // Bottom-center anchored: a smaller pet still stands on the same
-    // ground line instead of floating at the window's top-left. The
-    // context menu rides the root container: the image widget is
-    // display-only for hit testing, the column owns the right-click.
-    // on_press makes the container a press claimer so the right-click
-    // fall-through resolves here and the context menu shows; the drag
-    // never rides widget presses (cursor polling), so a claimed press
-    // costs nothing.
+    // Linux hands primary presses to the compositor through GTK/GDK;
+    // secondary presses still follow the canvas context-menu route.
+    if (builtin.target.os.tag == .linux) {
+        return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .window_drag = true, .context_menu = &pet_menu }, .{
+            node,
+            ui.el(.stack, .{ .width = 1, .height = pet_edge_pad }, .{}),
+        });
+    }
+    // Windows/macOS keep the established single-window bubble and
+    // app-owned cursor drag behavior.
     if (!bubbleActive(model)) {
         return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{
             node,
@@ -1681,7 +1728,7 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
         });
     }
     return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{
-        ui.el(.stack, .{ .width = bubble_window_w, .height = bubble_window_h }, .{bubbleView(ui, model)}),
+        ui.el(.stack, .{ .width = bubbleWindowWidth(model), .height = bubbleWindowHeight(model) }, .{bubbleView(ui, model)}),
         node,
         ui.el(.stack, .{ .width = 1, .height = pet_edge_pad }, .{}),
     });
@@ -1692,10 +1739,14 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
 fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
     const title_raw = model.bubble.title[0..model.bubble.title_len];
     const text_raw = model.bubble.text[0..model.bubble.text_len];
-    const title_clipped = clipDisplay(title_raw, bubble_display_chars, &bubble_title_scratch);
-    const text_clipped = clipDisplay(text_raw, bubble_display_chars, &bubble_text_scratch);
-    const title_lines = splitLines(title_clipped, bubble_chars_per_line);
-    const text_lines = splitLines(text_clipped, bubble_chars_per_line + 2);
+    const chars_per_line = bubbleCharsPerLine(model);
+    const display_chars = chars_per_line * bubble_max_lines;
+    const title_clipped = clipDisplay(title_raw, display_chars, &bubble_title_scratch);
+    const text_clipped = clipDisplay(text_raw, display_chars, &bubble_text_scratch);
+    const title_lines = splitLines(title_clipped, chars_per_line);
+    const text_lines = splitLines(text_clipped, chars_per_line);
+    const ui_scale = bubbleUiScale(model);
+    const font_size = bubbleFontSize(model);
 
     const title_fg = if (model.dark) canvas.Color.rgb8(237, 237, 238) else canvas.Color.rgb8(17, 17, 17);
     const muted_fg = if (model.dark) canvas.Color.rgb8(156, 158, 168) else canvas.Color.rgb8(88, 92, 106);
@@ -1706,41 +1757,46 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
     var row_count: usize = 0;
     for (title_lines) |line| {
         if (line.len == 0) continue;
-        var node2 = ui.paragraph(.{ .size = .sm }, &.{.{ .text = line, .weight = .bold }});
+        var node2 = ui.paragraph(.{ .text_size = font_size }, &.{.{ .text = line, .weight = .bold }});
         node2.widget.style.foreground = title_fg;
         rows[row_count] = node2;
         row_count += 1;
     }
     for (text_lines) |line| {
         if (line.len == 0) continue;
-        var node2 = ui.text(.{ .size = .sm }, line);
+        var node2 = ui.text(.{ .text_size = font_size }, line);
         node2.widget.style.foreground = text_fg;
         rows[row_count] = node2;
         row_count += 1;
     }
 
     var avatar = ui.image(.{
-        .width = 20,
-        .height = 20,
+        .width = 20 * ui_scale,
+        .height = 20 * ui_scale,
         .image = if (avatar_ready) avatar_image_id else 0,
         .semantics = .{ .label = "Agent avatar" },
     });
     avatar.widget.image_fit = .contain;
+    // Busy is a state change, not a reason to animate an otherwise
+    // unchanged popup forever. A static ellipsis keeps the status visible
+    // while allowing the bubble surface to sleep between hook updates.
     const spinner_slot = if (model.bubble.busy)
-        ui.el(.spinner, .{ .width = 16, .height = 16, .semantics = .{ .label = "Working" } }, .{})
+        ui.el(.stack, .{ .width = 16 * ui_scale, .height = 16 * ui_scale, .semantics = .{ .label = "Working" } }, .{
+            ui.text(.{ .text_size = font_size }, "…"),
+        })
     else
-        ui.el(.stack, .{ .width = 16, .height = 16 }, .{});
+        ui.el(.stack, .{ .width = 16 * ui_scale, .height = 16 * ui_scale }, .{});
 
     var card = ui.el(.panel, .{
-        .padding = bubble_card_pad,
+        .padding = 12 * ui_scale,
     }, .{
-        ui.row(.{ .gap = 8, .cross = .center }, .{
+        ui.row(.{ .gap = 8 * ui_scale, .cross = .center }, .{
             avatar,
-            ui.column(.{ .gap = 2, .cross = .start }, @as([]const AppUi.Node, rows[0..row_count])),
+            ui.column(.{ .gap = 2 * ui_scale, .cross = .start }, @as([]const AppUi.Node, rows[0..row_count])),
             spinner_slot,
         }),
     });
-    card.widget.style.radius = 18;
+    card.widget.style.radius = 18 * ui_scale;
     if (model.dark) {
         card.widget.style.background = canvas.Color.rgb8(25, 25, 28);
         card.widget.style.border = canvas.Color.rgba8(255, 255, 255, 26);
@@ -1749,8 +1805,8 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
         card.widget.style.background = canvas.Color.rgb8(255, 255, 255);
     }
     var tail = ui.image(.{
-        .width = tail_w,
-        .height = tail_h,
+        .width = @as(f32, @floatFromInt(tail_w)) * ui_scale,
+        .height = @as(f32, @floatFromInt(tail_h)) * ui_scale,
         .image = if (tail_ready) tail_image_id else 0,
     });
     tail.widget.image_fit = .contain;
@@ -1764,7 +1820,7 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
     return ui.column(.{ .grow = 1, .main = .end, .cross = .center }, .{
         card,
         tail,
-        ui.el(.stack, .{ .width = 1, .height = bubble_pet_gap }, .{}),
+        ui.el(.stack, .{ .width = 1, .height = 12 * ui_scale }, .{}),
     });
 }
 
@@ -1775,6 +1831,28 @@ const settings_canvas_label = "settings-canvas";
 
 fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []const PetdexApp.WindowDescriptor {
     var count: usize = 0;
+    if (builtin.target.os.tag == .linux and bubbleActive(model)) {
+        const pet_h = frame_h * model.scale;
+        scratch.windows[count] = .{
+            .label = "bubble",
+            .canvas_label = "bubble-canvas",
+            .title = "",
+            .width = bubbleWindowWidth(model),
+            .height = bubbleWindowHeight(model),
+            // Popup coordinates are parent-local anchors. The pet is
+            // bottom-centered in the fixed max-size canvas, so this
+            // point tracks the actual top of its current scaled frame.
+            .x = win_w / 2,
+            .y = win_h - pet_edge_pad - pet_h,
+            .resizable = false,
+            .titlebar = .chromeless,
+            .floating = true,
+            .transparent = true,
+            .click_through = true,
+            .popup_parent = "main",
+        };
+        count += 1;
+    }
     if (model.settings_open) {
         scratch.windows[count] = .{
             .label = settings_window_label,
@@ -1791,6 +1869,7 @@ fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []cons
 }
 
 fn petdexWindowView(ui: *PetdexApp.Ui, model: *const Model, window_label: []const u8) PetdexApp.Ui.Node {
+    if (std.mem.eql(u8, window_label, "bubble")) return bubbleView(ui, model);
     std.debug.assert(std.mem.eql(u8, window_label, settings_window_label));
     return settingsView(ui, model);
 }
@@ -2111,7 +2190,7 @@ pub fn main(init: std.process.Init) !void {
         .view = rootView,
         .on_key = onKey,
         .on_command = onCommand,
-        .on_frame = onFrame,
+        .on_frame = if (builtin.target.os.tag == .linux) null else onFrame,
         .on_urls_opened = onUrlsOpened,
         .windows_fn = petdexWindows,
         .window_view = petdexWindowView,
