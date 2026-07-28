@@ -2049,7 +2049,7 @@ const PetdexApp = native_sdk.UiApp(Model, Msg);
 const app_fonts = [_]PetdexApp.FontRegistration{.{
     .id = ui_font_id,
     .name = "NotoSansSC-wght.ttf",
-    .ttf = @embedFile("../assets/fonts/NotoSansSC-wght.ttf"),
+    .ttf = @embedFile("fonts/NotoSansSC-wght.ttf"),
 }};
 
 pub fn main(init: std.process.Init) !void {
