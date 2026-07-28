@@ -2,6 +2,15 @@ diff --git a/src/platform/linux/root.zig b/src/platform/linux/root.zig
 index a5842cb..16c533b 100644
 --- a/src/platform/linux/root.zig
 +++ b/src/platform/linux/root.zig
+@@ -421,6 +421,7 @@ const RunState = struct {
+         const handler = self.handler orelse return;
+         const context = self.handler_context orelse return;
+-        handler(context, event) catch {
++        handler(context, event) catch |err| {
++            std.debug.print("platform callback failed: {s} (event {s})\n", .{ @errorName(err), @tagName(event) });
+             self.failed = true;
+             if (comptime @import("builtin").is_test) return;
+             if (self.self) |linux| native_sdk_gtk_stop(linux.host);
 @@ -503,7 +503,7 @@ fn emitEvent(raw_event: *const anyopaque, context: ?*anyopaque) callconv(.c) voi
              .backend = .software,
              .pixel_format = .bgra8_unorm,
@@ -11,3 +20,44 @@ index a5842cb..16c533b 100644
              .color_space = .srgb,
              .vsync = true,
              .status = .ready,
+diff --git a/src/platform/linux/gtk_host.c b/src/platform/linux/gtk_host.c
+index 1570d9d..d0c70bf 100644
+--- a/src/platform/linux/gtk_host.c
++++ b/src/platform/linux/gtk_host.c
+@@ -2093,5 +2093,6 @@ static const char *native_sdk_accel_key_name(const char *key) {
+     if (strcmp(key, "space") == 0) return "space";
+     if (strcmp(key, "backspace") == 0) return "BackSpace";
++    if (strcmp(key, ",") == 0) return "comma";
+     if (strcmp(key, "arrowleft") == 0) return "Left";
+     if (strcmp(key, "arrowright") == 0) return "Right";
+     if (strcmp(key, "arrowup") == 0) return "Up";
+@@ -3072,6 +3073,8 @@ void native_sdk_gtk_destroy(native_sdk_gtk_host_t *host) {
+     for (int i = 0; i < host->window_count; i++) {
+         native_sdk_clear_window(&host->windows[i]);
+     }
++    native_sdk_clear_menu_actions(host);
++    if (host->menu_model) g_object_unref(host->menu_model);
+     g_object_unref(host->app);
+     free(host->app_name);
+     free(host->window_title);
+@@ -3080,7 +3083,5 @@ void native_sdk_gtk_destroy(native_sdk_gtk_host_t *host) {
+     native_sdk_free_string_list(host->allowed_origins, host->allowed_origins_count);
+     native_sdk_free_string_list(host->allowed_external_urls, host->allowed_external_urls_count);
+     native_sdk_clear_shortcuts(host);
+-    native_sdk_clear_menu_actions(host);
+-    if (host->menu_model) g_object_unref(host->menu_model);
+     free(host);
+ }
+diff --git a/src/platform/types.zig b/src/platform/types.zig
+index 4592d40..f682379 100644
+--- a/src/platform/types.zig
++++ b/src/platform/types.zig
+@@ -828,7 +828,7 @@ pub const GpuSurfaceOptions = struct {
+         return (self.backend == .metal or self.backend == .software) and
+             self.pixel_format == .bgra8_unorm and
+             self.present_mode == .timer and
+-            self.alpha_mode == .@"opaque" and
++            (self.alpha_mode == .@"opaque" or self.alpha_mode == .premultiplied) and
+             self.color_space == .srgb and
+             self.vsync;
+     }

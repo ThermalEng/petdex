@@ -34,13 +34,14 @@ const frame_h: f32 = 208;
 const max_scale: f32 = 1.2;
 const win_w: f32 = frame_w * max_scale;
 const win_h: f32 = frame_h * max_scale;
+const pet_edge_pad: f32 = 8;
 const cols: u64 = 8;
 const sheet_image_id: u64 = 1;
 const ui_font_id: canvas.FontId = canvas.min_registered_font_id;
 
 const app_permissions = [_][]const u8{ native_sdk.security.permission_command, native_sdk.security.permission_view };
 const shell_views = [_]native_sdk.ShellView{
-    .{ .label = canvas_label, .kind = .gpu_surface, .fill = true, .role = "Pet canvas", .accessibility_label = "Petdex pet", .gpu_backend = .metal, .gpu_pixel_format = .bgra8_unorm, .gpu_present_mode = .timer, .gpu_alpha_mode = .premultiplied, .gpu_color_space = .srgb, .gpu_vsync = true },
+    .{ .label = canvas_label, .kind = .gpu_surface, .fill = true, .role = "Pet canvas", .accessibility_label = "Petdex pet", .gpu_backend = if (builtin.target.os.tag == .macos) .metal else .software, .gpu_pixel_format = .bgra8_unorm, .gpu_present_mode = .timer, .gpu_alpha_mode = .premultiplied, .gpu_color_space = .srgb, .gpu_vsync = true },
 };
 const shell_windows = [_]native_sdk.ShellWindow{.{
     .label = "main",
@@ -215,10 +216,12 @@ fn petdexTokens(model: *const Model) canvas.DesignTokens {
         .reduce_motion = model.reduce_motion,
     });
     tokens.typography.font_id = ui_font_id;
+    // The main canvas is a desktop overlay, not an app page. Its clear
+    // color must retain alpha all the way into GTK's ARGB surface.
+    tokens.colors.background = canvas.Color.rgba8(0, 0, 0, 0);
     if (model.high_contrast) return tokens;
     const c = &tokens.colors;
     if (model.dark) {
-        c.background = canvas.Color.rgb8(12, 12, 15);
         c.surface = canvas.Color.rgb8(25, 25, 28);
         c.surface_subtle = canvas.Color.rgb8(45, 45, 48);
         c.surface_pressed = canvas.Color.rgb8(22, 27, 67);
@@ -227,7 +230,6 @@ fn petdexTokens(model: *const Model) canvas.DesignTokens {
         c.accent = canvas.Color.rgb8(137, 163, 255);
         c.destructive = canvas.Color.rgb8(250, 105, 94);
     } else {
-        c.background = canvas.Color.rgb8(247, 250, 255);
         c.surface = canvas.Color.rgb8(255, 255, 255);
         c.surface_subtle = canvas.Color.rgb8(236, 238, 244);
         c.surface_pressed = canvas.Color.rgb8(233, 238, 251);
@@ -1467,7 +1469,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             const pet_h = frame_h * model.scale;
             // A visible bubble widens the same window and adds a band
             // above the sprite. Only the centered sprite starts a drag.
-            const window_w = @max(pet_w, if (bubbleActive(model)) bubble_window_w else 0);
+            const window_w = @max(pet_w + pet_edge_pad * 2, if (bubbleActive(model)) bubble_window_w else 0);
             const bubble_h: f64 = if (bubbleActive(model)) bubble_window_h else 0;
             const pet_x = read.x + (@as(f64, window_w) - pet_w) / 2.0;
             const pet_y = read.y + bubble_h;
@@ -1548,17 +1550,17 @@ const pet_menu = [_]AppUi.ContextMenuItem{
     .{ .label = "Close Pet", .msg = .close_pet },
 };
 
-// The bubble lives in its OWN fixed-size window: floating,
-// transparent, click-through. Nothing is estimated — the window is a
-// constant, the card inside is intrinsic, and the surplus space is
-// crossable by clicks, so a misfit costs nothing anywhere.
+// The bubble shares the pet window so Linux never creates an immovable
+// companion toplevel. Resizing is bottom-anchored: the pet keeps its
+// screen position while this band grows upward above it.
 const bubble_window_w: f32 = 340;
-const bubble_window_h: f32 = 150;
+const bubble_window_h: f32 = 125;
 const bubble_text_w: f32 = 250;
-const bubble_chars_per_line: usize = 26;
+const bubble_chars_per_line: usize = 16;
 const bubble_max_lines: usize = 2;
 const bubble_display_chars: usize = bubble_chars_per_line * bubble_max_lines;
 const bubble_card_pad: f32 = 12;
+const bubble_pet_gap: f32 = 12;
 
 /// Count display characters (UTF-8 sequences, not bytes).
 fn charCount(text: []const u8) usize {
@@ -1638,8 +1640,8 @@ fn bubbleActive(model: *const Model) bool {
 /// the text can wrap like the old 190px-capped tooltip).
 fn fitWindow(model: *const Model, fx: *Effects) bool {
     const pet_w = frame_w * model.scale;
-    const width = @max(pet_w, if (bubbleActive(model)) bubble_window_w else 0);
-    const height = frame_h * model.scale + if (bubbleActive(model)) bubble_window_h else 0;
+    const width = @max(pet_w + pet_edge_pad * 2, if (bubbleActive(model)) bubble_window_w else 0);
+    const height = frame_h * model.scale + pet_edge_pad + if (bubbleActive(model)) bubble_window_h else 0;
     return fx.resizeWindow("main", width, height, .bottom_center);
 }
 
@@ -1666,11 +1668,15 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     // never rides widget presses (cursor polling), so a claimed press
     // costs nothing.
     if (!bubbleActive(model)) {
-        return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{node});
+        return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{
+            node,
+            ui.el(.stack, .{ .width = 1, .height = pet_edge_pad }, .{}),
+        });
     }
     return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{
         ui.el(.stack, .{ .width = bubble_window_w, .height = bubble_window_h }, .{bubbleView(ui, model)}),
         node,
+        ui.el(.stack, .{ .width = 1, .height = pet_edge_pad }, .{}),
     });
 }
 
@@ -1745,7 +1751,14 @@ fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
     // the tail rides up over the card's bottom hairline, hiding the
     // border segment behind it so bubble and arrow read as one shape.
     tail.widget.transform = canvas.Affine.translate(0, -1.5);
-    return ui.column(.{ .grow = 1, .main = .end, .cross = .center }, .{ card, tail });
+    // The bottom spacer is an explicit head gap. Keeping the group
+    // bottom-aligned avoids turning unused band height into a large,
+    // theme- or text-dependent distance from the pet.
+    return ui.column(.{ .grow = 1, .main = .end, .cross = .center }, .{
+        card,
+        tail,
+        ui.el(.stack, .{ .width = 1, .height = bubble_pet_gap }, .{}),
+    });
 }
 
 // --------------------------------------------------------- settings window
@@ -2110,7 +2123,11 @@ pub fn main(init: std.process.Init) !void {
         .default_frame = geometry.RectF.init(0, 0, win_w, win_h),
         .restore_state = false,
         .js_window_api = false,
-        .menus = &app_menus,
+        // GTK presents application menus as an in-window menubar. On a
+        // chromeless desktop pet that looks like a titlebar and also
+        // steals vertical space; Linux already exposes these commands
+        // through the pet's context menu.
+        .menus = if (builtin.target.os.tag == .linux) &.{} else &app_menus,
         .security = .{
             .permissions = &app_permissions,
             .navigation = .{ .allowed_origins = &.{ "zero://inline", "zero://app" } },
