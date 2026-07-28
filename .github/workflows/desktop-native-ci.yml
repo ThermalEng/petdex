@@ -112,6 +112,8 @@ jobs:
           git clone --depth 1 --branch "$NATIVE_SDK_BRANCH" "$NATIVE_SDK_REMOTE" "$GITHUB_WORKSPACE/native-sdk"
           git -C "$GITHUB_WORKSPACE/native-sdk" fetch --depth 1 origin "$NATIVE_SDK_REF"
           git -C "$GITHUB_WORKSPACE/native-sdk" checkout --detach "$NATIVE_SDK_REF"
+          git -C "$GITHUB_WORKSPACE/native-sdk" apply \
+            "$GITHUB_WORKSPACE/packages/petdex-desktop-native/patches/native-sdk-linux-premultiplied-alpha.patch"
           echo "NATIVE_SDK_PATH=$GITHUB_WORKSPACE/native-sdk" >> "$GITHUB_ENV"
 
       - name: Install Zig 0.16.0
@@ -133,7 +135,7 @@ jobs:
         working-directory: packages/petdex-desktop-native
         shell: bash
         run: |
-          "$NATIVE_CLI" build
+          "$NATIVE_CLI" build -Dcpu=baseline
           ls -lh zig-out/bin/
 
       # Compiling proves nothing about whether the app draws: the hook
@@ -195,6 +197,12 @@ jobs:
           echo
           curl -fsS http://127.0.0.1:7777/state
           echo
+          curl -fsS -X POST -H "x-petdex-update-token: $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"title":"中文通知","text":"字体与透明背景测试正常","agent_source":"codex"}' \
+            http://127.0.0.1:7777/bubble
+          echo
+          sleep 2
           import -window root /tmp/linux-screen.png
           # The first run drew a titled window with a blank interior:
           # frames present, the sheet decodes, nothing paints. These
@@ -572,3 +580,11 @@ jobs:
             ${{ runner.temp }}/windows-screen.png
             ${{ runner.temp }}/windows-screen-deeplink.png
           if-no-files-found: warn
+
+      - name: Upload Linux test binary
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: petdex-desktop-native-linux-test
+          path: packages/petdex-desktop-native/zig-out/bin/petdex-desktop-native
+          if-no-files-found: error

@@ -72,6 +72,8 @@ jobs:
           git clone --depth 1 --branch "$NATIVE_SDK_BRANCH" "$NATIVE_SDK_REMOTE" "$GITHUB_WORKSPACE/native-sdk"
           git -C "$GITHUB_WORKSPACE/native-sdk" fetch --depth 1 origin "$NATIVE_SDK_REF"
           git -C "$GITHUB_WORKSPACE/native-sdk" checkout --detach "$NATIVE_SDK_REF"
+          git -C "$GITHUB_WORKSPACE/native-sdk" apply \
+            "$GITHUB_WORKSPACE/packages/petdex-desktop-native/patches/native-sdk-linux-premultiplied-alpha.patch"
           echo "NATIVE_SDK_PATH=$GITHUB_WORKSPACE/native-sdk" >> "$GITHUB_ENV"
 
       - name: Install Zig 0.16.0
@@ -94,7 +96,7 @@ jobs:
         working-directory: packages/petdex-desktop-native
         shell: bash
         run: |
-          "$NATIVE_CLI" build
+          "$NATIVE_CLI" build -Dcpu=baseline
           ls -lh zig-out/bin/
 
       - name: Stage the binary (Linux)

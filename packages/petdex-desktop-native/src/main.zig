@@ -36,10 +36,11 @@ const win_w: f32 = frame_w * max_scale;
 const win_h: f32 = frame_h * max_scale;
 const cols: u64 = 8;
 const sheet_image_id: u64 = 1;
+const ui_font_id: canvas.FontId = canvas.min_registered_font_id;
 
 const app_permissions = [_][]const u8{ native_sdk.security.permission_command, native_sdk.security.permission_view };
 const shell_views = [_]native_sdk.ShellView{
-    .{ .label = canvas_label, .kind = .gpu_surface, .fill = true, .role = "Pet canvas", .accessibility_label = "Petdex pet", .gpu_backend = .metal, .gpu_pixel_format = .bgra8_unorm, .gpu_present_mode = .timer, .gpu_alpha_mode = .@"opaque", .gpu_color_space = .srgb, .gpu_vsync = true },
+    .{ .label = canvas_label, .kind = .gpu_surface, .fill = true, .role = "Pet canvas", .accessibility_label = "Petdex pet", .gpu_backend = .metal, .gpu_pixel_format = .bgra8_unorm, .gpu_present_mode = .timer, .gpu_alpha_mode = .premultiplied, .gpu_color_space = .srgb, .gpu_vsync = true },
 };
 const shell_windows = [_]native_sdk.ShellWindow{.{
     .label = "main",
@@ -213,6 +214,7 @@ fn petdexTokens(model: *const Model) canvas.DesignTokens {
         .contrast = if (model.high_contrast) .high else .standard,
         .reduce_motion = model.reduce_motion,
     });
+    tokens.typography.font_id = ui_font_id;
     if (model.high_contrast) return tokens;
     const c = &tokens.colors;
     if (model.dark) {
@@ -1328,6 +1330,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .toggle_bubbles => {
             model.bubbles_enabled = !model.bubbles_enabled;
+            _ = fitWindow(model, fx);
             saveSettings(model);
         },
         .set_scale => |fraction| {
@@ -1397,7 +1400,6 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                     model.pet_x = result.x;
                     model.pet_y = result.y;
                 }
-                syncBubbleWindow(model, fx);
                 if (model.vx >= physics_min_vel) {
                     setThrowState(model, .@"running-right", fx);
                 } else if (model.vx <= -physics_min_vel) {
@@ -1416,7 +1418,6 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             const read = fx.moveWindow("main", 0, 0, false) orelse return;
             model.pet_x = read.x;
             model.pet_y = read.y;
-            syncBubbleWindow(model, fx);
             if (model.dragging) {
                 if (read.primary_down) {
                     // Follow the cursor keeping the grab offset, and
@@ -1464,10 +1465,14 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             }
             const pet_w = frame_w * model.scale;
             const pet_h = frame_h * model.scale;
-            // The window is fitted to the sprite, so the pet rect IS
-            // the window rect.
-            const inside = read.cursor_x >= read.x and read.cursor_x <= read.x + pet_w and
-                read.cursor_y >= read.y and read.cursor_y <= read.y + pet_h;
+            // A visible bubble widens the same window and adds a band
+            // above the sprite. Only the centered sprite starts a drag.
+            const window_w = @max(pet_w, if (bubbleActive(model)) bubble_window_w else 0);
+            const bubble_h: f64 = if (bubbleActive(model)) bubble_window_h else 0;
+            const pet_x = read.x + (@as(f64, window_w) - pet_w) / 2.0;
+            const pet_y = read.y + bubble_h;
+            const inside = read.cursor_x >= pet_x and read.cursor_x <= pet_x + pet_w and
+                read.cursor_y >= pet_y and read.cursor_y <= pet_y + pet_h;
             if (read.primary_down and !model.primary_was_down and inside) {
                 model.dragging = true;
                 model.grab_dx = read.cursor_x - read.x;
@@ -1493,6 +1498,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                     loadAgentAvatar(model.bubble.agent[0..model.bubble.agent_len], model.dark, fx);
                     registerTail(model.dark, fx);
                 }
+                _ = fitWindow(model, fx);
             }
             const now = fx.wallMs();
             const dwell_over = now - model.shown_at_ms >= model.shown_dwell_ms;
@@ -1631,23 +1637,10 @@ fn bubbleActive(model: *const Model) bool {
 /// above it while a bubble is showing (kept at least bubble-wide so
 /// the text can wrap like the old 190px-capped tooltip).
 fn fitWindow(model: *const Model, fx: *Effects) bool {
-    return fx.resizeWindow("main", frame_w * model.scale, frame_h * model.scale, .bottom_center);
-}
-
-/// Keep the bubble window glued above the pet: read both origins and
-/// close the gap. Self-correcting, so drags, throws, and scale changes
-/// all need no special-casing.
-fn syncBubbleWindow(model: *const Model, fx: *Effects) void {
-    if (!bubbleActive(model)) return;
-    const cur = fx.moveWindow("bubble", 0, 0, false) orelse return;
     const pet_w = frame_w * model.scale;
-    const want_x = model.pet_x + pet_w / 2.0 - bubble_window_w / 2.0;
-    const want_y = model.pet_y - bubble_window_h + 2.0;
-    const dx = want_x - cur.x;
-    const dy = want_y - cur.y;
-    if (@abs(dx) > 0.5 or @abs(dy) > 0.5) {
-        _ = fx.moveWindow("bubble", dx, dy, false);
-    }
+    const width = @max(pet_w, if (bubbleActive(model)) bubble_window_w else 0);
+    const height = frame_h * model.scale + if (bubbleActive(model)) bubble_window_h else 0;
+    return fx.resizeWindow("main", width, height, .bottom_center);
 }
 
 pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
@@ -1672,10 +1665,16 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     // fall-through resolves here and the context menu shows; the drag
     // never rides widget presses (cursor polling), so a claimed press
     // costs nothing.
-    return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{node});
+    if (!bubbleActive(model)) {
+        return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{node});
+    }
+    return ui.column(.{ .grow = 1, .main = .end, .cross = .center, .on_press = .noop, .context_menu = &pet_menu }, .{
+        ui.el(.stack, .{ .width = bubble_window_w, .height = bubble_window_h }, .{bubbleView(ui, model)}),
+        node,
+    });
 }
 
-// ----------------------------------------------------------- bubble window
+// ----------------------------------------------------------- bubble
 
 fn bubbleView(ui: *AppUi, model: *const Model) AppUi.Node {
     const title_raw = model.bubble.title[0..model.bubble.title_len];
@@ -1756,23 +1755,6 @@ const settings_canvas_label = "settings-canvas";
 
 fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []const PetdexApp.WindowDescriptor {
     var count: usize = 0;
-    if (bubbleActive(model)) {
-        scratch.windows[count] = .{
-            .label = "bubble",
-            .canvas_label = "bubble-canvas",
-            .title = "",
-            .width = bubble_window_w,
-            .height = bubble_window_h,
-            .x = @floatCast(model.pet_x + (frame_w * model.scale) / 2.0 - bubble_window_w / 2.0),
-            .y = @floatCast(model.pet_y - bubble_window_h + 2.0),
-            .resizable = false,
-            .titlebar = .chromeless,
-            .floating = true,
-            .transparent = true,
-            .click_through = true,
-        };
-        count += 1;
-    }
     if (model.settings_open) {
         scratch.windows[count] = .{
             .label = settings_window_label,
@@ -1789,7 +1771,6 @@ fn petdexWindows(model: *const Model, scratch: *PetdexApp.WindowsScratch) []cons
 }
 
 fn petdexWindowView(ui: *PetdexApp.Ui, model: *const Model, window_label: []const u8) PetdexApp.Ui.Node {
-    if (std.mem.eql(u8, window_label, "bubble")) return bubbleView(ui, model);
     std.debug.assert(std.mem.eql(u8, window_label, settings_window_label));
     return settingsView(ui, model);
 }
@@ -2065,6 +2046,11 @@ const app_menus = [_]native_sdk.platform.Menu{.{
 }};
 
 const PetdexApp = native_sdk.UiApp(Model, Msg);
+const app_fonts = [_]PetdexApp.FontRegistration{.{
+    .id = ui_font_id,
+    .name = "NotoSansSC-wght.ttf",
+    .ttf = @embedFile("../assets/fonts/NotoSansSC-wght.ttf"),
+}};
 
 pub fn main(init: std.process.Init) !void {
     // Windows has no HOME. Everything the app keeps per-user hangs off
@@ -2110,6 +2096,7 @@ pub fn main(init: std.process.Init) !void {
         .windows_fn = petdexWindows,
         .window_view = petdexWindowView,
         .tokens_fn = petdexTokens,
+        .fonts = &app_fonts,
         .on_appearance = onAppearance,
     });
     defer app_state.destroy();

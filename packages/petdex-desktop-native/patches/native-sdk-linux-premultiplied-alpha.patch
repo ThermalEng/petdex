@@ -1,0 +1,13 @@
+diff --git a/src/platform/linux/root.zig b/src/platform/linux/root.zig
+index a5842cb..16c533b 100644
+--- a/src/platform/linux/root.zig
++++ b/src/platform/linux/root.zig
+@@ -503,7 +503,7 @@ fn emitEvent(raw_event: *const anyopaque, context: ?*anyopaque) callconv(.c) voi
+             .backend = .software,
+             .pixel_format = .bgra8_unorm,
+             .present_mode = .timer,
+-            .alpha_mode = .@"opaque",
++            .alpha_mode = .premultiplied,
+             .color_space = .srgb,
+             .vsync = true,
+             .status = .ready,
