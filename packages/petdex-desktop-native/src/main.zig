@@ -1553,10 +1553,13 @@ const pet_menu = [_]AppUi.ContextMenuItem{
 // The bubble shares the pet window so Linux never creates an immovable
 // companion toplevel. Resizing is bottom-anchored: the pet keeps its
 // screen position while this band grows upward above it.
-const bubble_window_w: f32 = 340;
+// Stay within the 231px startup window at normal pet scales. Linux's
+// GTK host does not expose resizeWindow, so a wider intrinsic child
+// makes GTK grow the toplevel from its left edge and can push the
+// avatar/card past the right side of a Wayland screen.
+const bubble_window_w: f32 = 220;
 const bubble_window_h: f32 = 125;
-const bubble_text_w: f32 = 250;
-const bubble_chars_per_line: usize = 16;
+const bubble_chars_per_line: usize = 8;
 const bubble_max_lines: usize = 2;
 const bubble_display_chars: usize = bubble_chars_per_line * bubble_max_lines;
 const bubble_card_pad: f32 = 12;
@@ -1659,6 +1662,10 @@ pub fn rootView(ui: *AppUi, model: *const Model) AppUi.Node {
     });
     node.widget.image_fit = .stretch;
     node.widget.image_sampling = .nearest;
+    // Bind the menu to the sprite itself, not only its layout parent.
+    // Linux resolves the deepest context-menu node on the right-click
+    // hit route before mounting the canvas fallback menu.
+    node.context_menu = &pet_menu;
     // Bottom-center anchored: a smaller pet still stands on the same
     // ground line instead of floating at the window's top-left. The
     // context menu rides the root container: the image widget is
