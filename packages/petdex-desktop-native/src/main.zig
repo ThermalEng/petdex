@@ -136,6 +136,7 @@ pub const Msg = union(enum) {
     bubble_lifetime_input: canvas.TextInputEvent,
     bubble_columns_input: canvas.TextInputEvent,
     bubble_answer_lines_input: canvas.TextInputEvent,
+    font_path_input: canvas.TextInputEvent,
     toggle_hide_dock,
     toggle_launch_at_login,
     toggle_focus_mode,
@@ -229,6 +230,10 @@ pub const Model = struct {
     bubble_columns_text_len: usize = 2,
     bubble_answer_lines_text: [2]u8 = .{ '2', 0 },
     bubble_answer_lines_text_len: usize = 1,
+    font_path: [512]u8 = @splat(0),
+    font_path_len: usize = 0,
+    font_path_dirty: bool = false,
+    font_load_failed: bool = false,
     /// macOS: run as a menu-bar app — no Dock icon, no app switcher
     /// entry. The status item stays either way, so Settings and Quit
     /// never lose their handle. Off by default.
@@ -289,6 +294,7 @@ fn petdexTokens(model: *const Model) canvas.DesignTokens {
     // gives the bubble a real 13..20pt range while every other window
     // keeps stock type.
     tokens.typography.heading_size = model.bubble_text_px;
+    if (custom_font_active) tokens.typography.font_id = custom_font_id;
     if (model.high_contrast) return tokens;
     const c = &tokens.colors;
     if (model.dark) {
@@ -825,6 +831,13 @@ fn settingsPath(buf: []u8) ?[]const u8 {
     return std.fmt.bufPrint(buf, "{s}/.petdex/desktop-native-settings.json", .{home}) catch null;
 }
 
+const custom_font_id: canvas.FontId = canvas.min_registered_font_id;
+const max_custom_font_bytes: usize = 24 * 1024 * 1024;
+var initial_font_path: [512]u8 = @splat(0);
+var initial_font_path_len: usize = 0;
+var initial_font_load_failed: bool = false;
+var custom_font_active: bool = false;
+
 /// Tiny file helpers usable from the runtime thread. They carry their
 /// own Io (see plat.zig), so the main thread's never leaks off-thread;
 /// the invariant is enforced by the type now, not by this comment.
@@ -834,13 +847,63 @@ fn cWriteFile(path: []const u8, bytes: []const u8) void {
     _ = plat.writeFile(path, bytes);
 }
 
+fn jsonEscapeString(value: []const u8, output: []u8) ?[]const u8 {
+    var len: usize = 0;
+    for (value) |byte| {
+        const escape: ?u8 = switch (byte) {
+            '"' => '"',
+            '\\' => '\\',
+            '\n' => 'n',
+            '\r' => 'r',
+            '\t' => 't',
+            else => null,
+        };
+        if (escape) |escaped| {
+            if (len + 2 > output.len) return null;
+            output[len] = '\\';
+            output[len + 1] = escaped;
+            len += 2;
+        } else {
+            if (len >= output.len) return null;
+            output[len] = byte;
+            len += 1;
+        }
+    }
+    return output[0..len];
+}
+
+fn jsonUnescapeString(value: []const u8, output: []u8) ?[]const u8 {
+    var input_index: usize = 0;
+    var len: usize = 0;
+    while (input_index < value.len) {
+        var byte = value[input_index];
+        input_index += 1;
+        if (byte == '\\') {
+            if (input_index >= value.len) return null;
+            byte = switch (value[input_index]) {
+                '"' => '"',
+                '\\' => '\\',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                else => return null,
+            };
+            input_index += 1;
+        }
+        if (len >= output.len) return null;
+        output[len] = byte;
+        len += 1;
+    }
+    return output[0..len];
+}
+
 fn saveSettings(model: *const Model) void {
     var path_buf: [512]u8 = undefined;
     const path = settingsPath(&path_buf) orelse return;
     // Headroom check (a bufPrint overflow here fails silently and
-    // drops the whole save): worst case with a 63-char slug, every
-    // field present and negative coordinates is ~255 bytes.
-    var buf: [448]u8 = undefined;
+    // drops the whole save): keep room for the configurable bubble
+    // fields, rotation state, a long slug, and negative coordinates.
+    var buf: [1536]u8 = undefined;
     const active = if (model.active_pet < catalog_len) catalog[model.active_pet].slice() else "";
     // The position keys only exist once the window has been fitted and
     // read: a save fired on the very first frame would otherwise
@@ -851,7 +914,10 @@ fn saveSettings(model: *const Model) void {
         std.fmt.bufPrint(&pos_buf, ",\"pet_x\":{d:.0},\"pet_y\":{d:.0}", .{ model.pet_x, model.pet_y }) catch ""
     else
         "";
-    const json = std.fmt.bufPrint(&buf, "{{\"active_pet\":\"{s}\",\"scale\":{d:.2},\"bubbles\":{},\"waiting_sound\":{},\"bubble_text\":{d:.1},\"bubble_lifetime\":{d:.0},\"bubble_columns\":{},\"bubble_answer_lines\":{},\"hide_dock\":{},\"rotate_pets\":{},\"rotation_day\":{d}{s},\"agents_prompted\":{}}}", .{ active, model.scale, model.bubbles_enabled, model.waiting_sound, model.bubble_text_px, model.bubble_lifetime_secs, model.bubble_columns, model.bubble_answer_lines, model.hide_dock, model.rotate_pets, model.rotation_day, pos, model.agents_prompted }) catch return;
+    var escaped_font_buf: [1024]u8 = undefined;
+    const font_path = std.mem.trim(u8, model.font_path[0..model.font_path_len], " \t\r\n");
+    const escaped_font = jsonEscapeString(font_path, &escaped_font_buf) orelse return;
+    const json = std.fmt.bufPrint(&buf, "{{\"active_pet\":\"{s}\",\"scale\":{d:.2},\"bubbles\":{},\"waiting_sound\":{},\"bubble_text\":{d:.1},\"bubble_lifetime\":{d:.0},\"bubble_columns\":{},\"bubble_answer_lines\":{},\"font_path\":\"{s}\",\"hide_dock\":{},\"rotate_pets\":{},\"rotation_day\":{d}{s},\"agents_prompted\":{}}}", .{ active, model.scale, model.bubbles_enabled, model.waiting_sound, model.bubble_text_px, model.bubble_lifetime_secs, model.bubble_columns, model.bubble_answer_lines, escaped_font, model.hide_dock, model.rotate_pets, model.rotation_day, pos, model.agents_prompted }) catch return;
     cWriteFile(path, json);
 }
 
@@ -879,6 +945,23 @@ fn editUnsignedText(buffer: []u8, length: *usize, edit: canvas.TextInputEvent, m
     const value = std.fmt.parseInt(u16, buffer[0..length.*], 10) catch return null;
     if (value < min_value or value > max_value) return null;
     return value;
+}
+
+fn editPathText(buffer: []u8, length: *usize, edit: canvas.TextInputEvent) void {
+    switch (edit) {
+        .insert_text => |text| {
+            const available = buffer.len - length.*;
+            const count = @min(available, text.len);
+            @memcpy(buffer[length.* .. length.* + count], text[0..count]);
+            length.* += count;
+        },
+        .delete_backward, .delete_word_backward => {
+            if (length.* > 0) length.* -= 1;
+            while (length.* > 0 and (buffer[length.*] & 0xC0) == 0x80) length.* -= 1;
+        },
+        .clear => length.* = 0,
+        else => {},
+    }
 }
 
 /// Read a pet's encoded sheet bytes into `buf`. Prefers pet.json's
@@ -1172,6 +1255,11 @@ fn resolveInitialPet(io: std.Io, allocator: std.mem.Allocator, environ_map: *std
             if (hook_server.jsonNumberPub(json, "bubble_answer_lines")) |v| {
                 if (v >= bubble_answer_lines_min and v <= bubble_answer_lines_max) initial_bubble_answer_lines = @intFromFloat(v);
             }
+            if (hook_server.jsonStringPub(json, "font_path")) |encoded| {
+                if (jsonUnescapeString(encoded, &initial_font_path)) |value| {
+                    initial_font_path_len = value.len;
+                }
+            }
             if (hook_server.jsonStringPub(json, "bubbles")) |_| {} else if (std.mem.indexOf(u8, json, "\"bubbles\":false") != null) {
                 initial_bubbles = false;
             }
@@ -1373,6 +1461,9 @@ pub fn boot(model: *Model, fx: *Effects) void {
     model.bubble_answer_lines = initial_bubble_answer_lines;
     setUnsignedText(model.bubble_columns_text[0..], &model.bubble_columns_text_len, model.bubble_columns);
     setUnsignedText(model.bubble_answer_lines_text[0..], &model.bubble_answer_lines_text_len, model.bubble_answer_lines);
+    @memcpy(model.font_path[0..initial_font_path_len], initial_font_path[0..initial_font_path_len]);
+    model.font_path_len = initial_font_path_len;
+    model.font_load_failed = initial_font_load_failed;
     model.agents_prompted = initial_agents_prompted;
     model.hide_dock = initial_hide_dock;
     model.rotate_pets = initial_rotate_pets;
@@ -1644,6 +1735,12 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 _ = fitWindow(model, fx);
                 saveSettings(model);
             }
+        },
+        .font_path_input => |edit| {
+            editPathText(model.font_path[0..], &model.font_path_len, edit);
+            model.font_path_dirty = true;
+            model.font_load_failed = false;
+            saveSettings(model);
         },
         .toggle_hide_dock => {
             model.hide_dock = !model.hide_dock;
@@ -2532,6 +2629,27 @@ fn settingsView(ui: *AppUi, model: *const Model) AppUi.Node {
             }),
         }),
         ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
+            ui.column(.{ .padding = 12, .gap = 8 }, .{
+                ui.text(.{}, "Custom font file"),
+                ui.text(.{ .size = .sm, .style_tokens = .{ .foreground = .text_muted } },
+                    if (model.font_load_failed)
+                        "Could not load this TrueType font; the default font is active"
+                    else if (model.font_path_dirty)
+                        "Saved; restart Petdex to apply"
+                    else if (custom_font_active)
+                        "Applied to all app text; restart after changing the path"
+                    else
+                        "Optional local .ttf path; leave empty for the default font"),
+                ui.el(.input, .{
+                    .height = 34,
+                    .text = model.font_path[0..model.font_path_len],
+                    .on_input = AppUi.inputMsg(.font_path_input),
+                    .placeholder = "/path/to/font.ttf",
+                    .semantics = .{ .label = "Custom font file path" },
+                }, .{}),
+            }),
+        }),
+        ui.el(.panel, .{ .style_tokens = .{ .background = .surface, .radius = .md } }, .{
             ui.row(.{ .padding = 12, .cross = .center, .gap = 12 }, .{
                 ui.column(.{ .grow = 1 }, .{
                     ui.text(.{}, "Show messages"),
@@ -2740,6 +2858,30 @@ pub fn main(init: std.process.Init) !void {
     resolveInitialPet(init.io, boot_allocator, init.environ_map) catch |err| {
         std.debug.print("petdex: no pet found ({s}); install one with `petdex install <pet>`\n", .{@errorName(err)});
     };
+    var custom_font_bytes: ?[]u8 = null;
+    defer if (custom_font_bytes) |bytes| boot_allocator.free(bytes);
+    var font_registrations: [1]PetdexApp.FontRegistration = undefined;
+    var app_fonts: []const PetdexApp.FontRegistration = &.{};
+    if (initial_font_path_len > 0) {
+        const path = initial_font_path[0..initial_font_path_len];
+        if (plat.readFileAlloc(boot_allocator, path, max_custom_font_bytes)) |bytes| {
+            if (canvas.font_ttf.parseFailureReason(bytes) == null) {
+                custom_font_bytes = bytes;
+                custom_font_active = true;
+                font_registrations[0] = .{
+                    .id = custom_font_id,
+                    .name = path,
+                    .ttf = bytes,
+                };
+                app_fonts = font_registrations[0..];
+            } else {
+                boot_allocator.free(bytes);
+                initial_font_load_failed = true;
+            }
+        } else {
+            initial_font_load_failed = true;
+        }
+    }
     const app_state = try PetdexApp.create(std.heap.page_allocator, .{
         .name = "petdex-desktop-native",
         .scene = shell_scene,
@@ -2759,6 +2901,7 @@ pub fn main(init: std.process.Init) !void {
         .windows_fn = petdexWindows,
         .window_view = petdexWindowView,
         .tokens_fn = petdexTokens,
+        .fonts = app_fonts,
         .on_appearance = onAppearance,
     });
     defer app_state.destroy();
@@ -2828,6 +2971,15 @@ test "bubble geometry follows columns lines and font size" {
     model.bubble_text_px = bubble_text_max_px;
     try std.testing.expect(bubbleWindowWidth(&model) > default_width);
     try std.testing.expect(bubbleWindowHeight(&model) > default_height);
+}
+
+test "custom font path round-trips through settings JSON escaping" {
+    const path = "C:\\Users\\名字\\Font \"Regular\".ttf";
+    var escaped_buf: [256]u8 = undefined;
+    const escaped = jsonEscapeString(path, &escaped_buf).?;
+    try std.testing.expectEqualStrings("C:\\\\Users\\\\名字\\\\Font \\\"Regular\\\".ttf", escaped);
+    var decoded_buf: [256]u8 = undefined;
+    try std.testing.expectEqualStrings(path, jsonUnescapeString(escaped, &decoded_buf).?);
 }
 
 test "tap detection separates pats from drags" {
